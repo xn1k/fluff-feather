@@ -4,6 +4,7 @@ import { Sprites } from './sprites.js';
 import { biome, biomeIndex, fmtNum } from './core.js';
 
 export const W = 256, H = 160, GROUND = 134;
+const MON_H = 37;
 const HERO_X = 96, COMP_X = 62, MON_X = 184;
 const FONT = '"Tiny5", monospace';
 
@@ -34,11 +35,14 @@ export function drawForm(ctx, formId, x, feetY, h, pose, flip = false) {
 
 function drawSprite(ctx, spr, x, feetY, h, pose, flip, hue) {
   let frames, fi;
-  if (pose.atk >= 0 && spr.anims.attack) { frames = spr.anims.attack; fi = Math.min(frames.length - 1, Math.floor(pose.atk * frames.length)); }
-  else if (pose.moving && spr.anims.walk) { frames = spr.anims.walk; fi = Math.floor(pose.walk * 10) % frames.length; }
-  else { frames = spr.anims.idle || spr.anims.walk; fi = spr.anims.idle ? Math.floor(pose.walk * 4) % frames.length : 0; }
-  const [sx, sy, sw, sh] = frames[fi];
-  const k = h / spr.h;
+  let an;
+  if (pose.atk >= 0 && spr.anims.attack) { an = 'attack'; frames = spr.anims.attack; fi = Math.min(frames.length - 1, Math.floor(pose.atk * frames.length)); }
+  else if (pose.moving && spr.anims.walk) { an = 'walk'; frames = spr.anims.walk; fi = Math.floor(pose.walk * 10) % frames.length; }
+  else { an = spr.anims.idle ? 'idle' : 'walk'; frames = spr.anims[an]; fi = Math.floor(pose.walk * 4) % frames.length; }
+  const fr = frames[fi] || frames[0];
+  if (!fr) return;
+  const [sx, sy, sw, sh] = fr;
+  const k = h / spr.h * ((spr.animScale && spr.animScale[an]) || 1);
   const dw = sw * k, dh = sh * k;
   ctx.save();
   if (hue) ctx.filter = `hue-rotate(${hue}deg) saturate(1.2)`;
@@ -121,7 +125,7 @@ function drawCritter(ctx, form, x, feetY, h, pose, flip) {
 // ------------------------------------------------------------------ monsters
 function drawMonster(ctx, m, x, feetY, t, flash, alpha = 1) {
   const g = m.big ? Sprites.grids.bosses : Sprites.grids.monsters;
-  const baseH = 30 * m.scale;
+  const baseH = MON_H * m.scale;
   const squash = 1 + Math.sin(t * 6) * 0.04 + flash * 0.15;
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -130,6 +134,7 @@ function drawMonster(ctx, m, x, feetY, t, flash, alpha = 1) {
   if (g && g.cells[m.cell]) {
     const [sx, sy, sw, sh] = g.cells[m.cell];
     const k = (baseH * (m.big ? 1.25 : 1)) / Math.max(sh, sw * 0.8);
+    if (g.flip && g.flip.includes(m.cell)) ctx.scale(-1, 1);
     if (flash > 0) ctx.filter = 'brightness(3)';
     ctx.drawImage(g.img, sx, sy, sw, sh, -sw * k / 2, -sh * k, sw * k, sh * k);
     ctx.filter = 'none';
@@ -182,7 +187,7 @@ function drawBackground(ctx, bi, scroll, t) {
   const b = BIOMES[bi];
   const img = Sprites.bg[b.id] || {};
   if (img.far) {
-    tileImage(ctx, img.far, scroll * 0.15, 0, H);
+    tileImage(ctx, img.far, scroll * 0.15, 0, GROUND + 2);
   } else {
     const gr = ctx.createLinearGradient(0, 0, 0, GROUND);
     gr.addColorStop(0, b.sky[0]); gr.addColorStop(1, b.sky[1]);
@@ -194,7 +199,7 @@ function drawBackground(ctx, bi, scroll, t) {
     hills(ctx, scroll * 0.15, 96, 22, 70, b.hill2, 1);
     hills(ctx, scroll * 0.3, 112, 16, 48, b.hill, 2);
   }
-  if (img.near) tileImage(ctx, img.near, scroll * 0.5, GROUND - 64, 64);
+  if (img.near) tileImage(ctx, img.near, scroll * 0.55, GROUND + 1 - 78, 78);
   else props(ctx, b, scroll * 0.6);
   // ground
   ctx.fillStyle = b.ground; ctx.fillRect(0, GROUND, W, H - GROUND);
@@ -207,10 +212,15 @@ function drawBackground(ctx, bi, scroll, t) {
     ctx.fillRect(x + 4, GROUND + 4, 2, 2);
   }
 }
+// Tiles horizontally, mirroring every other copy so the edges always meet seamlessly.
 function tileImage(ctx, img, scroll, y, h) {
   const w = img.width * (h / img.height);
-  let x = -(scroll % w);
-  for (; x < W; x += w) ctx.drawImage(img, Math.floor(x), y, Math.ceil(w) + 1, h);
+  const first = Math.floor(scroll / w);
+  for (let i = first, x = -(scroll - first * w); x < W; i++, x += w) {
+    const dx = Math.floor(x), dw = Math.ceil(w) + 1;
+    if (i & 1) { ctx.save(); ctx.translate(dx + dw, y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, dw, h); ctx.restore(); }
+    else ctx.drawImage(img, dx, y, dw, h);
+  }
 }
 function hills(ctx, scroll, base, amp, period, col, seed) {
   ctx.fillStyle = col;
@@ -297,7 +307,7 @@ export class Renderer {
   }
   handle(ev, battle) {
     const m = battle.monster;
-    const mx = MON_X, my = GROUND - 18 * (m ? m.scale : 1);
+    const mx = MON_X, my = GROUND - MON_H * 0.45 * (m ? m.scale : 1);
     switch (ev.type) {
       case 'swing':
         if (ev.src === 'hero') { this.heroAtk = 0; this.heroAtkDur = Math.min(0.32, 0.9 / battle.stats.aps); }
@@ -305,7 +315,7 @@ export class Renderer {
         break;
       case 'hit': {
         const col = ev.crit ? '#ffd23c' : ev.src === 'tap' ? '#ffffff' : ev.src === 'comp' ? '#9ae0ff' : '#ffe8e0';
-        this.text(fmtNum(ev.dmg) + (ev.crit ? '!' : ''), mx - 6 + Math.random() * 20, my - 10 - Math.random() * 8, col, ev.crit ? 11 : 8);
+        this.text(fmtNum(ev.dmg) + (ev.crit ? '!' : ''), mx - 18 + Math.random() * 36, my + 6 - Math.random() * 14, col, ev.crit ? 10 : 7, 0.7, -26);
         this.flash = 0.08;
         if (ev.src === 'tap') this.fx.push({ k: 'slash', x: mx - 8 + Math.random() * 16, y: my - 6 + Math.random() * 12, life: 0.18, max: 0.18, a: Math.random() * Math.PI });
         if (ev.crit) { this.spark(mx, my, '#ffd23c', 5); this.shake = Math.max(this.shake, 0.12); }
@@ -403,7 +413,7 @@ export class Renderer {
   }
 
   monsterBar(ctx, m, battle) {
-    const w = 52, x = MON_X - w / 2, y = GROUND - 34 * m.scale * (m.big ? 1.25 : 1) - 16;
+    const w = 52, x = MON_X - w / 2, y = Math.max(14, GROUND - MON_H * m.scale * (m.big ? 1.25 : 1) - (m.kind === 'boss' ? 16 : 8));
     ctx.font = `bold 7px ${FONT}`; ctx.textAlign = 'center';
     ctx.lineWidth = 2; ctx.strokeStyle = '#1a1020';
     const label = m.name;
