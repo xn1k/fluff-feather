@@ -25,11 +25,12 @@ function hash(n) { n = (n << 13) ^ n; return ((n * (n * n * 15731 + 789221) + 13
 // ------------------------------------------------------------------ critter drawing
 // pose: { walk: phase seconds, atk: 0..1 (attack progress) or -1 }
 // Uses generated sprites when present; T2 forms without art borrow their parent's sprite, hue-shifted.
-export function drawForm(ctx, formId, x, feetY, h, pose, flip = false) {
+// `area` (optional): size by body mass instead of outline height, so feathers/staffs don't shrink the character.
+export function drawForm(ctx, formId, x, feetY, h, pose, flip = false, area = 0) {
   const form = FORMS[formId];
   let spr = Sprites.forms[formId], hue = 0;
-  if (!spr && form.tier === 2 && Sprites.forms[form.parent]) { spr = Sprites.forms[form.parent]; hue = [40, 160, 280][form.leaf]; }
-  if (spr) return drawSprite(ctx, spr, x, feetY, h * (spr.scale || 1), pose, flip, hue);
+  if (!spr && form.tier === 2 && Sprites.forms[form.parent]) { spr = Sprites.forms[form.parent]; hue = [40, 160, 280][form.leaf]; area *= 1.12; }
+  if (spr) return drawSprite(ctx, spr, x, feetY, (area && spr.sa ? area * spr.h / spr.sa : h) * (spr.scale || 1), pose, flip, hue);
   drawCritter(ctx, form, x, feetY, h, pose, flip);
 }
 
@@ -377,10 +378,11 @@ export class Renderer {
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.beginPath(); ctx.ellipse(HERO_X, GROUND + 1, 11, 3, 0, 0, Math.PI * 2); ctx.fill();
     if (cf) {
-      ctx.beginPath(); ctx.ellipse(COMP_X, GROUND + 1, 10, 3, 0, 0, Math.PI * 2); ctx.fill();
-      drawForm(ctx, cf, COMP_X, GROUND, game.compH, pose(this.compAtk, this.compAtkDur));
+      const cx = Math.round(COMP_X - ((game.heroA || 26) - 26 + (game.compA || 22) - 22) * 0.4); // bigger pair -> more room
+      ctx.beginPath(); ctx.ellipse(cx, GROUND + 1, 10, 3, 0, 0, Math.PI * 2); ctx.fill();
+      drawForm(ctx, cf, cx, GROUND, game.compH, pose(this.compAtk, this.compAtkDur), false, game.compA);
     }
-    drawForm(ctx, hf, HERO_X, GROUND, game.heroH, pose(this.heroAtk, this.heroAtkDur));
+    drawForm(ctx, hf, HERO_X, GROUND, game.heroH, pose(this.heroAtk, this.heroAtkDur), false, game.heroA);
     if (this.heroAtk >= 0) { this.heroAtk += dt; if (this.heroAtk > this.heroAtkDur) this.heroAtk = -1; }
     if (this.compAtk >= 0) { this.compAtk += dt; if (this.compAtk > this.compAtkDur) this.compAtk = -1; }
 

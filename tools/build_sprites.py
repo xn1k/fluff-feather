@@ -90,8 +90,11 @@ def build_form(form_dir):
     cell_h = meta['meta']['cell']['h']
     for f in ('json',): out.with_suffix('.json').unlink(missing_ok=True)
     for extra in out.parent.glob(f'{form_dir.name}_preview*.png'): extra.unlink()
+    # Body mass (sqrt of opaque pixels, median walk frame): the game sizes by this so tall props don't shrink a character.
+    walk_fr = frames_in(anims.get('walk', anims.get('idle')))
+    sa = round(statistics.median(int((np.array(Image.open(p).getchannel('A')) > 0).sum()) for p in walk_fr) ** 0.5, 2)
     shutil.rmtree(tmp, ignore_errors=True)
-    return {'src': f'forms/{out.name}', 'h': ref, 'cellH': cell_h, 'anims': rects, 'animScale': scale}
+    return {'src': f'forms/{out.name}', 'h': ref, 'sa': sa, 'cellH': cell_h, 'anims': rects, 'animScale': scale}
 
 
 def build_grid(name, dirs, expected):

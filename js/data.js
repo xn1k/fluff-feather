@@ -1,6 +1,6 @@
 // Static game data. Adding a new animal = add an entry to ANIMALS (+ sprites).
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 
 // Branch archetypes. T1 forms get the archetype bonus; T2 forms add a trait.
 export const ARCH = {

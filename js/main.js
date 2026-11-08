@@ -10,11 +10,11 @@ const MIN_AWAY = 30; // seconds away before offline progress kicks in
 
 const G = {
   s: null, battle: null, renderer: null, tab: 'upgrades', buyX: 1, nextAnimal: null,
-  heroFormId: 'kitten', compFormId: null, heroH: 40, compH: 34,
+  heroFormId: 'kitten', compFormId: null, heroH: 40, compH: 34, heroA: 26, compA: 0,
   refreshForms() {
     const hf = heroForm(this.s), cf = companionForm(this.s);
-    this.heroFormId = hf.id; this.heroH = [40, 46, 52][hf.tier];
-    this.compFormId = cf ? cf.id : null; this.compH = cf ? [34, 38, 43][cf.tier] : 0;
+    this.heroFormId = hf.id; this.heroH = [40, 46, 52][hf.tier]; this.heroA = [26, 32, 40][hf.tier];
+    this.compFormId = cf ? cf.id : null; this.compH = cf ? [34, 38, 43][cf.tier] : 0; this.compA = cf ? [22, 27, 34][cf.tier] : 0;
   },
   save() {
     if (!this.s) return;
