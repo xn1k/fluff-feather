@@ -1,0 +1,4 @@
+# Raw fal.ai generations (1024px, large) stay local; processed sprites live in assets/sprites
+assets/generated/
+__pycache__/
+node_modules/

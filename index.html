@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#2b2340">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Fluff &amp; Feather</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tiny5&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="hud">
+    <div class="cur">
+      <span class="c gold"><i>🪙</i><b id="h-gold">0</b></span>
+      <span class="c gems"><i>💎</i><b id="h-gems">0</b></span>
+      <span class="c dust"><i>✨</i><b id="h-dust">0</b></span>
+    </div>
+    <div class="stage-row">
+      <span id="h-stage">Stage 1</span>
+      <span id="h-biome">Sunny Meadow</span>
+    </div>
+    <div id="h-waves"></div>
+  </header>
+  <div id="stage-wrap">
+    <canvas id="cv"></canvas>
+    <div id="h-boss" class="bossbar hidden"><i></i><span></span></div>
+    <button id="btn-evolve" class="hidden" data-act="openEvo">✨ Evolve!</button>
+  </div>
+  <div id="actions">
+    <button id="btn-boss" class="hidden" data-act="retryBoss">⚔️ Fight boss</button>
+    <div id="dps"><span id="h-dps">0</span> <small>DPS</small> · <span id="h-tap">0</span> <small>per tap</small></div>
+    <button id="btn-frenzy" data-act="frenzy"><i></i><span>Frenzy</span></button>
+  </div>
+  <nav id="tabs">
+    <button data-tab="upgrades" class="on">⚔️<span>Train</span></button>
+    <button data-tab="hero">🐾<span>Hero</span></button>
+    <button data-tab="items">🎒<span>Items</span></button>
+    <button data-tab="pals">🤝<span>Pals</span></button>
+    <button data-tab="prestige">✨<span>Prestige</span></button>
+    <button data-tab="more">⚙️<span>More</span></button>
+  </nav>
+  <main id="panel"></main>
+</div>
+<div id="modal" class="hidden"><div class="mbox"></div></div>
+<div id="toasts"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
