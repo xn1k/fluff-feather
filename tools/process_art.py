@@ -75,7 +75,12 @@ for d in sorted(GEN.iterdir()):
         tier = d.name.count('_') and (2 if d.name[-1].isdigit() else 1)
         px = max(2, round(fg_height(d / 'walk.png') / TARGET[tier])) if (d / 'walk.png').exists() else None
         if (d / 'walk.png').exists():
-            st('pipeline', d / 'walk.png', d / 'walk_proc', '--grid', '6x1', '--px', px)
+            # gap-based slicing keeps capes/weapons whole; fixed grid only if the frames touch
+            if (d / 'walk_proc').exists(): import shutil; shutil.rmtree(d / 'walk_proc')
+            st('pipeline', d / 'walk.png', d / 'walk_proc', '--expect', '6', '--px', px)
+            if nframes(d / 'walk_proc') != 6:
+                import shutil; shutil.rmtree(d / 'walk_proc')
+                st('pipeline', d / 'walk.png', d / 'walk_proc', '--grid', '6x1', '--px', px)
         if (d / 'attack.png').exists():
             st('pipeline', d / 'attack.png', d / 'attack_proc', '--expect', '4', '--px', px)
             if nframes(d / 'attack_proc') != 4:  # frames touching -> fixed grid
