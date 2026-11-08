@@ -336,6 +336,9 @@ export class Renderer {
       case 'bossFail': this.text('Boss escaped!', W / 2, 60, '#ff7a7a', 11, 1.8, -6); break;
       case 'stage': this.text(`Stage ${ev.stage}`, W / 2, 50, '#ffffff', 12, 1.6, -6); break;
       case 'frenzy': this.text('FRENZY!', HERO_X, 50, '#ff9a3c', 13, 1.5, -8); break;
+      case 'sp': this.text(`+${ev.n} SKILL POINT`, W / 2, 34, '#ffe14a', 11, 2, -6); this.spark(HERO_X, GROUND - 30, '#ffe14a', 20, 70); break;
+      case 'jackpot': this.text('JACKPOT!', MON_X, 30, '#ffd23c', 11, 1.4, -10); this.spark(MON_X, GROUND - 20, '#ffd23c', 24, 90); break;
+      case 'thunder': this.text('THUNDERCLAP!', MON_X, 26, '#9adfff', 10, 1.2, -10); this.spark(MON_X, GROUND - 20, '#9adfff', 18, 100); this.shake = 0.3; break;
     }
   }
   tapFx(lx, ly) { this.spark(lx, ly, '#ffffff', 3, 40); }

@@ -157,6 +157,8 @@ function handleEvents(b) {
         }
         break;
       }
+      case 'sp': sfx.loot(); vib(20); toast(`🌟 You found ${ev.n > 1 ? ev.n + ' skill points' : 'a skill point'}! Spend it in <b>Talents</b>.`); break;
+      case 'jackpot': sfx.loot(); break;
       case 'companionUnlock': toast('🤝 You can now recruit a <b>pal</b>! Check the Pals tab.'); break;
       case 'stage':
         if (ev.stage === 30) toast('✨ <b>Prestige</b> unlocked! Check the Prestige tab.');

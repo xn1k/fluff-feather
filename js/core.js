@@ -1,7 +1,7 @@
 // Pure game logic: state, formulas, battle simulation. No DOM here (runs in Node for balance sims).
 import {
   ANIMALS, FORMS, EVO_LEVELS, BIOMES, BOSSES, SPECIALS, UPGRADES, PERKS, RARITIES, SLOTS, ITEM_BASES,
-  PREFIXES, AFFIXES, COMPANION_STAGE, PRESTIGE_STAGE, GEM_COSTS,
+  PREFIXES, AFFIXES, COMPANION_STAGE, PRESTIGE_STAGE, GEM_COSTS, TALENTS, TALENT_ROWS, SP_CHANCE, SP_FIRST_BIGBOSS,
 } from './data.js';
 
 // Balance knobs (tools/sim.mjs can override them: node tools/sim.mjs 3 5 '{"hpGrowth":1.6}')
@@ -29,6 +29,7 @@ export function newState(animal) {
     settings: { autoSell: 0, vibrate: true, sound: true },
     frenzy: 0, frenzyT: 0,
     gemMilestone: 0,
+    sp: 0, spTotal: 0, talents: {},
   };
   return s;
 }
@@ -36,6 +37,8 @@ export function newState(animal) {
 // Fill in fields added in later versions.
 export function migrate(s) {
   const d = newState(s.animal || 'kitten');
+  // Talent tree arrived in v0.3: grant points for progress already made.
+  if (s.talents === undefined && s.bestStage) { s.sp = Math.floor(s.bestStage / 10) + Math.floor(((s.stats && s.stats.bossKills) || 0) / 10); s.spTotal = s.sp; }
   for (const k of Object.keys(d)) if (s[k] === undefined) s[k] = d[k];
   for (const k of ['upg', 'perks', 'evo', 'settings', 'stats', 'equipped']) {
     for (const kk of Object.keys(d[k])) if (s[k][kk] === undefined) s[k][kk] = d[k][kk];
@@ -220,6 +223,31 @@ export function perkCost(p, lvl) { return Math.ceil(p.base * Math.pow(p.growth, 
 
 export function companionCost(lvl) { return 1e9 * Math.pow(1.1, lvl); }
 
+// ---------------------------------------------------------------- talents
+export const TALENT = Object.fromEntries(TALENTS.map(t => [t.id, t]));
+export function talentRank(s, id) { return s.talents[id] || 0; }
+// Total effect at the current rank: additive talents sum, multiplicative ones compound.
+export function talentVal(s, id) { const t = TALENT[id], r = talentRank(s, id); return t.mult ? Math.pow(t.v, r) : t.v * r; }
+export function branchSpent(s, br) { return TALENTS.filter(t => t.br === br).reduce((a, t) => a + talentRank(s, t.id) * TALENT_ROWS[t.row].cost, 0); }
+export function talentCost(t) { return TALENT_ROWS[t.row].cost; }
+export function talentRowOpen(s, br, row) { return branchSpent(s, br) >= TALENT_ROWS[row].need; }
+export function canLearn(s, id) {
+  const t = TALENT[id];
+  return talentRank(s, id) < t.max && talentRowOpen(s, t.br, t.row) && s.sp >= talentCost(t);
+}
+export function learnTalent(s, id) {
+  if (!canLearn(s, id)) return false;
+  s.sp -= talentCost(TALENT[id]); s.talents[id] = talentRank(s, id) + 1;
+  return true;
+}
+export function talentsSpent(s) { return TALENTS.reduce((a, t) => a + talentRank(s, t.id) * talentCost(t), 0); }
+export function resetTalents(s) {
+  if (s.gems < GEM_COSTS.talentReset || !talentsSpent(s)) return false;
+  s.gems -= GEM_COSTS.talentReset; s.sp += talentsSpent(s); s.talents = {};
+  return true;
+}
+export function anyLearnable(s) { return s.sp > 0 && TALENTS.some(t => canLearn(s, t.id)); }
+
 // ---------------------------------------------------------------- stats
 const TIER_MULT = [1, 3, 10];
 
@@ -239,6 +267,7 @@ export function computeStats(s) {
   for (const it of equippedItems(s)) for (const [k, v] of Object.entries(it.stats)) item[k] += v;
   const P = s.perks, U = s.upg;
   const frenzy = s.frenzyT > 0;
+  const T = id => talentVal(s, id), R = id => talentRank(s, id);
 
   const arch = hf.tier >= 1 ? hf.arch : null;
   let hit = (1 + U.dmg) * Math.pow(2, Math.floor(U.dmg / 25));
@@ -249,32 +278,37 @@ export function computeStats(s) {
   hit *= 1 + TUNE.spirit * P.spirit;
   hit *= 1 + TUNE.sdPer * s.stardustTotal;
   hit *= 1 + item.dmg;
+  hit *= (1 + T('sharp')) * T('overp');
 
   let aps = 1 * (1 + 0.05 * U.speed) * (1 + item.speed);
   if (arch === 'swift') aps *= 1.25;
   aps *= Math.pow(1.4, has('haste'));
+  aps *= (1 + T('light')) * T('blur');
   if (frenzy) aps *= 2;
   aps = Math.min(aps, 12);
 
   let critChance = 0.03 + 0.01 * U.crit + (passive.critChance || 0) + item.critChance + 0.12 * has('precision');
   if (arch === 'swift') critChance += 0.05;
+  critChance += T('keen');
   critChance = Math.min(0.75, critChance);
-  const critMult = 2 + 0.1 * U.critd + item.critDmg + 1.5 * has('precision');
+  const critMult = 2 + 0.1 * U.critd + item.critDmg + 1.5 * has('precision') + T('brutal');
 
   let tapHit = hit * 0.6 * (1 + 0.15 * U.tap) * (1 + 0.4 * P.tapm) * (1 + item.tap);
   if (arch === 'mystic') tapHit *= 2;
   tapHit *= Math.pow(3, has('storm'));
+  tapHit *= 1 + T('quick');
   if (frenzy) tapHit *= 2;
 
   let gold = (1 + 0.15 * U.gold) * (1 + (passive.gold || 0)) * (1 + 0.3 * P.paws) * (1 + item.gold);
   if (arch === 'mystic') gold *= 1.25;
   gold *= Math.pow(2, has('midas'));
+  gold *= (1 + T('golden')) * T('midasp');
 
-  const xp = (1 + 0.3 * P.wise) * (1 + item.xp);
-  let boss = (1 + (passive.boss || 0) + item.boss) * Math.pow(2.5, has('bossSlayer'));
+  const xp = (1 + 0.3 * P.wise) * (1 + item.xp) * (1 + T('study'));
+  let boss = (1 + (passive.boss || 0) + item.boss) * Math.pow(2.5, has('bossSlayer')) * (1 + T('giant'));
   const luckLv = 0.2 * P.luck + item.luck + (has('lucky') ? 0.6 : 0);
-  const lootMult = (1 + 0.2 * P.luck) * Math.pow(2, has('lucky'));
-  const gemMult = Math.pow(2, has('lucky'));
+  const lootMult = (1 + 0.2 * P.luck) * Math.pow(2, has('lucky')) * (1 + T('nose'));
+  const gemMult = Math.pow(2, has('lucky')) * (1 + T('gemsense'));
 
   // companion
   let compHit = 0, compAps = 1.2;
@@ -286,6 +320,7 @@ export function computeStats(s) {
     if (cf.tier >= 1 && cf.arch === 'power') cdps *= 1.4;
     if (cf.tier >= 1 && cf.arch === 'swift') compAps = 1.6;
     cdps *= 1 + 0.5 * P.pack;
+    cdps *= 1 + T('packt');
     if (frenzy) cdps *= 2;
     compHit = cdps / compAps;
   }
@@ -296,8 +331,11 @@ export function computeStats(s) {
   return {
     hit, aps, critChance, critMult, tapHit, gold, xp, boss, luck: luckLv, lootMult, gemMult,
     compHit, compAps, doubleChance, cleave: has('cleave') > 0,
-    bossTime: BOSS_TIME + 3 * P.boss, autoDps, tapDps: tapHit * expCrit,
-    offlineCapH: 8 + 2 * P.nap,
+    bossTime: BOSS_TIME + 3 * P.boss + T('wind'), autoDps, tapDps: tapHit * expCrit,
+    offlineCapH: 8 + 2 * P.nap + T('dream'),
+    frenzyKills: FRENZY_KILLS - T('charge'), frenzyTime: FRENZY_TIME + T('fury'),
+    walkMult: Math.max(0.5, 1 - T('fleet')), doubleTap: T('dtap'), spMult: 1 + T('scout'),
+    execute: R('exec') > 0, thunder: R('thunder') > 0, jackpot: R('jackpot') > 0,
   };
 }
 
@@ -384,6 +422,9 @@ export class Battle {
     if (m.hp <= 0) {
       if (this.stats.cleave && !this.isBoss()) this.carry = -m.hp;
       this.kill();
+    } else if (this.stats.execute && !this.isBoss() && m.hp < m.maxHp * 0.25) {
+      this.events.push({ type: 'execute' });
+      m.hp = 0; this.kill();
     }
   }
 
@@ -397,8 +438,13 @@ export class Battle {
     const s = this.s;
     s.stats.taps++;
     if (this.phase !== 'fight') { this.phaseT = Math.max(0, this.phaseT - 0.12); return; }
-    const { dmg, crit } = this.rollHit(this.stats.tapHit);
+    const st = this.stats;
+    let { dmg, crit } = this.rollHit(st.tapHit);
+    if (st.thunder && s.stats.taps % 25 === 0) { dmg *= 25; this.events.push({ type: 'thunder' }); }
     this.damage(dmg, 'tap', crit);
+    if (st.doubleTap && this.phase === 'fight' && this.rand() < st.doubleTap) {
+      const h2 = this.rollHit(st.tapHit); this.damage(h2.dmg, 'tap', h2.crit);
+    }
   }
 
   kill() {
@@ -406,11 +452,18 @@ export class Battle {
     s.stats.kills++;
     const boss = this.isBoss();
     if (boss) s.stats.bossKills++;
-    const gold = monsterGold(s.stage, m.kind) * st.gold;
+    let gold = monsterGold(s.stage, m.kind) * st.gold;
+    if (st.jackpot && this.rand() < 0.03) { gold *= 10; this.events.push({ type: 'jackpot' }); }
     s.gold += gold; s.stats.goldEarned += gold;
     this.events.push({ type: 'kill', gold, kind: m.kind, monster: m });
     addXp(s, monsterXp(s.stage, m.kind) * st.xp, this.events);
-    if (s.frenzyT <= 0) s.frenzy = Math.min(FRENZY_KILLS, s.frenzy + 1);
+    if (s.frenzyT <= 0) s.frenzy = Math.min(st.frenzyKills, s.frenzy + 1);
+
+    // skill points: a chance on special kills, guaranteed for a big boss on a brand-new best stage
+    let sp = 0;
+    if (SP_CHANCE[m.kind] && this.rand() < SP_CHANCE[m.kind] * st.spMult) sp++;
+    if (m.kind === 'bigboss' && s.stage >= s.bestStage) sp += SP_FIRST_BIGBOSS;
+    if (sp) { s.sp += sp; s.spTotal += sp; this.events.push({ type: 'sp', n: sp }); }
 
     // gems
     let gems = 0;
@@ -453,7 +506,7 @@ export class Battle {
     } else {
       s.wave++;
     }
-    this.phase = 'walk'; this.phaseT = 0.55;
+    this.phase = 'walk'; this.phaseT = 0.55 * st.walkMult;
     this.dirtyStats = true;
     this.spawn();
   }
@@ -484,8 +537,8 @@ export class Battle {
 
   activateFrenzy() {
     const s = this.s;
-    if (s.frenzy < FRENZY_KILLS || s.frenzyT > 0) return false;
-    s.frenzy = 0; s.frenzyT = FRENZY_TIME;
+    if (s.frenzy < this.stats.frenzyKills || s.frenzyT > 0) return false;
+    s.frenzy = 0; s.frenzyT = this.stats.frenzyTime;
     this.refresh();
     this.events.push({ type: 'frenzy' });
     return true;
@@ -536,14 +589,14 @@ export const FRENZY_TIME = 12;
 // ---------------------------------------------------------------- offline progress
 // Analytic-ish: walk stage by stage with auto DPS (no taps). Returns a summary.
 export function simulateOffline(s, seconds, rand = Math.random) {
-  const sum = { seconds, gold: 0, xp: 0, kills: 0, stages: 0, items: [], soldGold: 0, gems: 0, levels: 0, startStage: s.stage };
-  const WALK = 0.55;
+  const sum = { seconds, sp: 0, gold: 0, xp: 0, kills: 0, stages: 0, items: [], soldGold: 0, gems: 0, levels: 0, startStage: s.stage };
   let t = seconds;
   let guard = 0;
   const startLevel = s.level;
   while (t > 0 && guard++ < 5000) {
     const st = computeStats(s);
     const dps = st.autoDps;
+    const WALK = 0.55 * st.walkMult;
     const stage = s.stage;
     const normHp = monsterHp(stage, 5, 'normal');
     const tNorm = Math.max(normHp / dps, 0.15) + WALK;
@@ -565,7 +618,7 @@ export function simulateOffline(s, seconds, rand = Math.random) {
       kills = Math.floor(chunk / tNorm); dur = chunk;
       s.farming = true;
     }
-    const g = (kills * monsterGold(stage, 'normal') + bossKills * monsterGold(stage, kind)) * st.gold;
+    const g = (kills * monsterGold(stage, 'normal') + bossKills * monsterGold(stage, kind)) * st.gold * (st.jackpot ? 1.27 : 1);
     const x = (kills * monsterXp(stage, 'normal') + bossKills * monsterXp(stage, kind)) * st.xp;
     s.gold += g; sum.gold += g; s.stats.goldEarned += g;
     sum.xp += x; addXp(s, x, null);
@@ -582,6 +635,9 @@ export function simulateOffline(s, seconds, rand = Math.random) {
     if (bossKills) {
       s.stats.bossKills++;
       if (rand() < 0.03 * st.gemMult) { s.gems++; sum.gems++; }
+      let sp = rand() < SP_CHANCE[kind] * st.spMult ? 1 : 0;
+      if (kind === 'bigboss' && s.stage >= s.bestStage) sp += SP_FIRST_BIGBOSS;
+      s.sp += sp; s.spTotal += sp; sum.sp += sp;
       s.stage++; s.wave = 1; s.farming = false; sum.stages++;
       if (s.stage > s.maxStage) s.maxStage = s.stage;
       if (s.stage > s.bestStage) {

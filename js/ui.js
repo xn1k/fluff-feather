@@ -1,13 +1,14 @@
 // DOM UI: HUD, tab panels, modals, toasts. All buttons use data-act and one delegated click handler.
 import {
   ANIMALS, ANIMAL_IDS, FORMS, ARCH, TRAITS, UPGRADES, PERKS, RARITIES, SLOTS, EVO_LEVELS, GEM_COSTS,
-  COMPANION_STAGE, PRESTIGE_STAGE, VERSION,
+  COMPANION_STAGE, PRESTIGE_STAGE, VERSION, TALENTS, TALENT_ROWS, TALENT_BRANCHES, SP_CHANCE,
 } from './data.js';
 import {
   fmtNum, fmtTime, computeStats, upgCostN, upgMaxAffordable, perkCost, companionCost, companionUnlocked,
   pendingEvo, heroForm, companionForm, stardustGain, doPrestige, respecCost, doRespec, itemById, itemScore,
   sellValue, fmtStat, STAT_NAMES, rollItem, addItem, xpToNext, biome, WAVES, simulateOffline, Battle, FRENZY_KILLS,
-  isBigBossStage,
+  isBigBossStage, TALENT, talentRank, talentVal, branchSpent, talentCost, talentRowOpen, canLearn, learnTalent,
+  talentsSpent, resetTalents, anyLearnable,
 } from './core.js';
 import { portrait } from './render.js';
 import { Sprites, itemIconCanvas } from './sprites.js';
@@ -70,9 +71,9 @@ export function updateHUD() {
   }
   els['btn-boss'].classList.toggle('hidden', !s.farming);
   const fr = els['btn-frenzy'];
-  const pct = s.frenzyT > 0 ? 100 * s.frenzyT / 12 : 100 * s.frenzy / FRENZY_KILLS;
+  const pct = s.frenzyT > 0 ? 100 * s.frenzyT / st.frenzyTime : 100 * s.frenzy / st.frenzyKills;
   fr.firstChild.style.width = pct + '%';
-  fr.classList.toggle('ready', s.frenzy >= FRENZY_KILLS && s.frenzyT <= 0);
+  fr.classList.toggle('ready', s.frenzy >= st.frenzyKills && s.frenzyT <= 0);
   setText(fr.lastChild, 'fr', s.frenzyT > 0 ? `${Math.ceil(s.frenzyT)}s` : 'Frenzy');
   // evolution badge
   const pend = pendingEvo(s.animal, s.level, s) >= 0 || (s.companion.animal && pendingEvo(s.companion.animal, s.companion.level, s) >= 0);
@@ -80,6 +81,7 @@ export function updateHUD() {
   setBadge('hero', pendingEvo(s.animal, s.level, s) >= 0);
   setBadge('pals', (companionUnlocked(s) && !s.companion.animal) || (s.companion.animal && pendingEvo(s.companion.animal, s.companion.level, s) >= 0));
   setBadge('items', s.items.some(i => i.isNew));
+  setBadge('talents', anyLearnable(s));
   setBadge('prestige', s.maxStage >= PRESTIGE_STAGE && stardustGain(s) >= Math.max(5, s.stardustTotal * 0.25) && !s.seenPrestigeHint);
   // panel refresh (throttled; never while a finger is down on it)
   const now = performance.now();
@@ -221,6 +223,34 @@ const PANELS = {
     h += `<h3>Pal evolution</h3>` + treeHTML(s.companion.animal, s.companion.level);
     const other = ANIMAL_IDS.find(a => a !== s.animal && a !== s.companion.animal);
     if (other) h += `<div class="mbtns"><button class="btn warn" data-act="swapPal" data-animal="${other}">Swap to ${ANIMALS[other].name}<small>pal level resets to 1</small></button></div>`;
+    return h;
+  },
+
+  talents() {
+    const s = G.s;
+    const br = G.talentBr || 'might';
+    const pctx = k => Math.round(SP_CHANCE[k] * 100) + '%';
+    let h = `<div class="sphead"><div><h2 style="margin:0">🌳 Talents</h2><div class="muted">Spent ${talentsSpent(s)} · found ${s.spTotal} all time</div></div>
+      <div class="spcount">🌟 <b>${s.sp}</b><small>skill points</small></div></div>
+      <p class="muted" style="font-size:12px;margin:4px 0 8px">Bosses (${pctx('boss')}), big bosses (${pctx('bigboss')}, always on a new best stage), mimics and gem slimes (${pctx('mimic')}) can drop skill points. Deeper rows cost more and open as you invest in a branch. Talents stay through prestige.</p>`;
+    h += `<div class="seg tbr">${TALENT_BRANCHES.map(b => `<button data-act="talentBr" data-br="${b.id}" class="${br === b.id ? 'on' : ''}" style="${br === b.id ? `background:${b.color}` : ''}">${b.icon} ${b.name}<small>${branchSpent(s, b.id)}</small></button>`).join('')}</div>`;
+    const spent = branchSpent(s, br);
+    const bdef = TALENT_BRANCHES.find(b => b.id === br);
+    TALENT_ROWS.forEach((row, ri) => {
+      const open = talentRowOpen(s, br, ri);
+      h += `<div class="trowhead${open ? '' : ' locked'}"><span>${['I', 'II', 'III', 'IV', 'V'][ri]}</span>${open ? `${row.cost} 🌟 per rank` : `🔒 Spend ${row.need - spent} more in ${bdef.name}`}</div><div class="trow">`;
+      for (const t of TALENTS.filter(t => t.br === br && t.row === ri)) {
+        const r = talentRank(s, t.id), maxed = r >= t.max;
+        const pips = t.max > 1 ? `<div class="pips">${Array.from({ length: t.max }, (_, i) => `<i class="${i < r ? 'on' : ''}"></i>`).join('')}</div>` : '';
+        const now = t.max > 1 && r > 0 ? `<div class="now">Now: ${t.desc(talentVal(s, t.id))}</div>` : '';
+        const what = t.max > 1 ? `${t.desc(t.v)} per rank` : t.desc(t.v);
+        h += `<div class="tnode${open ? '' : ' locked'}${r ? ' has' : ''}${maxed ? ' maxed' : ''}" style="--bc:${bdef.color}">
+          <div class="tt"><span class="ti">${t.icon}</span><b>${t.name}</b></div>${pips}<div class="desc">${what}</div>${now}
+          ${maxed ? '<button class="btn" disabled>MAX</button>' : `<button class="btn" data-act="learn" data-id="${t.id}" ${canLearn(s, t.id) ? '' : 'disabled'}>Learn<small>🌟 ${talentCost(t)}</small></button>`}</div>`;
+      }
+      h += `</div>`;
+    });
+    h += `<div class="mbtns"><button class="btn gem" data-act="talentReset" ${!talentsSpent(s) || s.gems < GEM_COSTS.talentReset ? 'disabled' : ''}>Reset talent tree<small>💎 ${GEM_COSTS.talentReset} · refunds all points</small></button></div>`;
     return h;
   },
 
@@ -385,7 +415,7 @@ export function welcomeBack(sum) {
   modal(`<h2>😴 Welcome back!</h2><p style="text-align:center">You were away for <b>${fmtTime(sum.seconds)}</b>${sum.capped ? ' (max)' : ''}. Your hero kept fighting:</p>
     <div class="stats"><span>Gold</span><b>🪙 ${fmtNum(sum.gold + sum.soldGold)}</b><span>Monsters defeated</span><b>${fmtNum(sum.kills)}</b>
     <span>Stages cleared</span><b>${sum.stages} (now ${sum.endStage})</b><span>Levels gained</span><b>${sum.levels}</b>
-    <span>Items found</span><b>${items}</b>${sum.gems ? `<span>Gems</span><b>💎 ${sum.gems}</b>` : ''}</div>
+    <span>Items found</span><b>${items}</b>${sum.gems ? `<span>Gems</span><b>💎 ${sum.gems}</b>` : ''}${sum.sp ? `<span>Skill points</span><b>🌟 ${sum.sp}</b>` : ''}</div>
     <div class="mbtns"><button class="btn big" data-act="close">Yay!</button></div>`);
 }
 
@@ -439,6 +469,19 @@ const ACTIONS = {
     sfx.evolve(); vib([30, 50, 30]);
     G.renderer.spark(d.comp ? 62 : 96, 110, '#fff6a0', 30, 80);
     toast(`✨ Evolved into <b>${f.name}</b>!`);
+  },
+  talentBr(d) { G.talentBr = d.br; },
+  learn(d) {
+    if (!learnTalent(G.s, d.id)) return;
+    sfx.level(); vib(15); G.battle.refresh(); G.save();
+  },
+  talentReset() {
+    modal(`<h2>Reset talents?</h2><p>All ${talentsSpent(G.s)} spent skill points come back so you can plan a new build.</p>
+      <div class="mbtns"><button class="btn warn" data-act="close">Cancel</button><button class="btn gem" data-act="talentResetYes">Spend 💎 ${GEM_COSTS.talentReset}</button></div>`);
+  },
+  talentResetYes() {
+    if (!resetTalents(G.s)) return;
+    closeModal(); G.battle.refresh(); G.save(); toast('🌳 Talent tree reset');
   },
   respec(d) {
     const s = G.s, which = +d.w;

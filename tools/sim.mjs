@@ -1,7 +1,8 @@
 // Balance sim: a bot plays the game (tapping + greedy upgrades + prestiges) and prints pacing.
 // usage: node tools/sim.mjs [hours=6] [tapsPerSec=5]
 import { newState, Battle, computeStats, upgCost, perkCost, companionCost, companionUnlocked, pendingEvo,
-  stardustGain, doPrestige, itemScore, fmtNum, fmtTime, simulateOffline } from '../js/core.js';
+  stardustGain, doPrestige, itemScore, fmtNum, fmtTime, simulateOffline, learnTalent, canLearn } from '../js/core.js';
+import { TALENTS } from '../js/data.js';
 import { UPGRADES, PERKS, PRESTIGE_STAGE } from '../js/data.js';
 import { TUNE } from '../js/core.js';
 if (process.argv[4]) Object.assign(TUNE, JSON.parse(process.argv[4]));
@@ -58,6 +59,12 @@ function shop() {
     const cur = s.items.find(i => i.id === s.equipped[it.slot]);
     if (!cur || itemScore(it) > itemScore(cur)) s.equipped[it.slot] = it.id;
   }
+  // talents: learn whatever is affordable, Might first, shallow rows first
+  for (let g = 0; g < 50 && s.sp > 0; g++) {
+    const t = TALENTS.filter(t => canLearn(s, t.id)).sort((a, b) => a.row - b.row || (a.br === 'might' ? -1 : 1))[0];
+    if (!t) break;
+    learnTalent(s, t.id);
+  }
   b.refresh();
 }
 
@@ -81,7 +88,7 @@ while (t < HOURS * 3600) {
   b.step(dt);
   // taps
   if (rand() < TAPS * dt) b.tap();
-  if (s.frenzy >= 40) b.activateFrenzy();
+  if (s.frenzy >= b.stats.frenzyKills) b.activateFrenzy();
   b.events.length = 0;
   t += dt;
   if (t >= nextShop) { shop(); nextShop = t + 2; }
@@ -91,7 +98,7 @@ while (t < HOURS * 3600) {
   }
   if (t >= nextReport) {
     const st = computeStats(s);
-    log.push(`[${fmtTime(t)}] stage ${s.stage}${s.farming ? 'F' : ''} lvl ${s.level} gold ${fmtNum(s.gold)} auto ${fmtNum(st.autoDps)} tapdps ${fmtNum(TAPS * st.tapDps)} upg ${JSON.stringify(s.upg)} items ${s.items.length} gems ${s.gems} comp ${s.companion.level}`);
+    log.push(`[${fmtTime(t)}] stage ${s.stage}${s.farming ? 'F' : ''} lvl ${s.level} gold ${fmtNum(s.gold)} auto ${fmtNum(st.autoDps)} tapdps ${fmtNum(TAPS * st.tapDps)} upg ${JSON.stringify(s.upg)} items ${s.items.length} gems ${s.gems} comp ${s.companion.level} SP ${s.spTotal} talents ${JSON.stringify(s.talents)}`);
     nextReport = t + 600;
   }
   // Prestige when stuck for 4 minutes past the prestige stage, and gain is decent.

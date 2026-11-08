@@ -1,6 +1,6 @@
 // Static game data. Adding a new animal = add an entry to ANIMALS (+ sprites).
 
-export const VERSION = '0.2.1';
+export const VERSION = '0.3.0';
 
 // Branch archetypes. T1 forms get the archetype bonus; T2 forms add a trait.
 export const ARCH = {
@@ -195,6 +195,51 @@ export const AFFIXES = {
   luck:       { name: 'Loot luck',    fmt: v => `+${Math.round(v * 100)}%`,  roll: (il, m) => Math.min(1, 0.05 * m * (1 + il / 100)) },
 };
 
-export const GEM_COSTS = { respecLeaf: 10, respecBranch: 25, chest: 15, timeWarp: 20 };
+export const GEM_COSTS = { respecLeaf: 10, respecBranch: 25, chest: 15, timeWarp: 20, talentReset: 20 };
 export const COMPANION_STAGE = 60;
 export const PRESTIGE_STAGE = 30;
+
+// ---------------------------------------------------------------- talent tree
+// Skill points drop by chance (bosses, big bosses, mimics, gem slimes). Deeper rows cost more per rank
+// and need more points already spent in that branch. Talents survive prestige; gems reset the tree.
+export const TALENT_ROWS = [
+  { cost: 1, need: 0 }, { cost: 2, need: 5 }, { cost: 3, need: 15 }, { cost: 5, need: 30 }, { cost: 8, need: 45 },
+];
+export const TALENT_BRANCHES = [
+  { id: 'might', name: 'Might', icon: '⚔️', color: '#d84a4a' },
+  { id: 'swift', name: 'Swiftness', icon: '⚡', color: '#3a9ad8' },
+  { id: 'fortune', name: 'Fortune', icon: '🍀', color: '#3aa84a' },
+];
+// v = effect per rank. row is 0-based.
+export const TALENTS = [
+  { id: 'sharp',   br: 'might', row: 0, max: 5, icon: '🗡️', name: 'Sharpened Claws', v: 0.10, desc: v => `+${pc(v)} damage` },
+  { id: 'brutal',  br: 'might', row: 0, max: 5, icon: '💥', name: 'Brutal Crits',    v: 0.15, desc: v => `+${pc(v)} crit damage` },
+  { id: 'giant',   br: 'might', row: 1, max: 5, icon: '👑', name: 'Giant Slayer',    v: 0.15, desc: v => `+${pc(v)} boss damage` },
+  { id: 'keen',    br: 'might', row: 1, max: 5, icon: '🎯', name: 'Eagle Eye',       v: 0.01, desc: v => `+${pc(v)} crit chance` },
+  { id: 'fury',    br: 'might', row: 2, max: 3, icon: '😤', name: 'Battle Fury',     v: 2,    desc: v => `Frenzy lasts +${v}s` },
+  { id: 'packt',   br: 'might', row: 2, max: 3, icon: '🐾', name: 'Pack Tactics',    v: 0.25, desc: v => `+${pc(v)} pal damage` },
+  { id: 'overp',   br: 'might', row: 3, max: 3, icon: '🔥', name: 'Overpower',       v: 1.25, desc: v => `×${(v).toFixed(2)} all damage`, mult: true },
+  { id: 'exec',    br: 'might', row: 4, max: 1, icon: '☠️', name: 'Executioner',     v: 0.25, desc: () => 'Normal monsters below 25% HP are finished off instantly' },
+
+  { id: 'quick',   br: 'swift', row: 0, max: 5, icon: '👆', name: 'Quick Fingers',   v: 0.15, desc: v => `+${pc(v)} tap damage` },
+  { id: 'light',   br: 'swift', row: 0, max: 5, icon: '🪶', name: 'Light Feet',      v: 0.03, desc: v => `+${pc(v)} attack speed` },
+  { id: 'charge',  br: 'swift', row: 1, max: 5, icon: '🔋', name: 'Frenzy Charge',   v: 3,    desc: v => `Frenzy needs ${v} fewer kills` },
+  { id: 'fleet',   br: 'swift', row: 1, max: 5, icon: '👟', name: 'Fleet Paws',      v: 0.08, desc: v => `${pc(v)} less walking between fights` },
+  { id: 'wind',    br: 'swift', row: 2, max: 3, icon: '⏳', name: 'Second Wind',     v: 3,    desc: v => `+${v}s boss timer` },
+  { id: 'dtap',    br: 'swift', row: 2, max: 3, icon: '✌️', name: 'Double Tap',      v: 0.08, desc: v => `${pc(v)} chance a tap hits twice` },
+  { id: 'blur',    br: 'swift', row: 3, max: 3, icon: '🌪️', name: 'Blur',            v: 1.2,  desc: v => `×${v.toFixed(2)} attack speed`, mult: true },
+  { id: 'thunder', br: 'swift', row: 4, max: 1, icon: '🌩️', name: 'Thunderclap',     v: 25,   desc: () => 'Every 25th tap strikes for 25× tap damage' },
+
+  { id: 'golden',  br: 'fortune', row: 0, max: 5, icon: '🪙', name: 'Golden Touch',  v: 0.10, desc: v => `+${pc(v)} gold` },
+  { id: 'study',   br: 'fortune', row: 0, max: 5, icon: '📚', name: 'Quick Study',   v: 0.10, desc: v => `+${pc(v)} XP` },
+  { id: 'nose',    br: 'fortune', row: 1, max: 5, icon: '🐽', name: 'Treasure Nose', v: 0.10, desc: v => `+${pc(v)} loot chance` },
+  { id: 'gemsense',br: 'fortune', row: 1, max: 5, icon: '💎', name: 'Gem Sense',     v: 0.20, desc: v => `+${pc(v)} gem drops from bosses` },
+  { id: 'scout',   br: 'fortune', row: 2, max: 3, icon: '🔭', name: 'Talent Scout',  v: 0.15, desc: v => `+${pc(v)} skill point chance` },
+  { id: 'dream',   br: 'fortune', row: 2, max: 3, icon: '😴', name: 'Sweet Dreams',  v: 1,    desc: v => `+${v}h max away time` },
+  { id: 'midasp',  br: 'fortune', row: 3, max: 3, icon: '🏺', name: 'Midas Paw',     v: 1.3,  desc: v => `×${v.toFixed(2)} gold`, mult: true },
+  { id: 'jackpot', br: 'fortune', row: 4, max: 1, icon: '🎰', name: 'Jackpot',       v: 0.03, desc: () => '3% of kills drop 10× gold' },
+];
+function pc(v) { return `${Math.round(v * 100)}%`; }
+// Base chance to find a skill point per kill type.
+export const SP_CHANCE = { boss: 0.10, bigboss: 0.40, mimic: 0.25, gem: 0.25 };
+export const SP_FIRST_BIGBOSS = 1; // guaranteed point for beating a big boss on a brand-new best stage
