@@ -2,7 +2,7 @@
 
 A cozy 16-bit idle adventure for phones (installable PWA). Pick a kitten, chick or panda cub,
 tap and auto-battle your way right through stages and bosses, evolve along a 1 → 3 → 9 branching
-path, find loot, recruit a pal, grow a talent tree with rare skill points and prestige for Stardust.
+path, find loot, recruit a pal, grow a talent tree with rare skill points, pick run blessings after big bosses, use active skills, pop gift balloons, finish quests and prestige for Stardust.
 
 - `index.html`, `style.css`, `js/` – the game (plain ES modules, no build step)
 - `js/data.js` – animals, evolution trees, monsters, upgrades, perks, loot tables

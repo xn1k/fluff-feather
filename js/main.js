@@ -1,8 +1,8 @@
 import { ANIMALS, RARITIES, EVO_LEVELS } from './data.js';
-import { newState, migrate, Battle, heroForm, companionForm, simulateOffline, computeStats, pendingEvo, fmtNum } from './core.js';
+import { newState, migrate, Battle, heroForm, companionForm, simulateOffline, computeStats, pendingEvo, fmtNum, isUpgrade } from './core.js';
 import { Renderer } from './render.js';
 import { loadSprites } from './sprites.js';
-import { initUI, updateHUD, toast, modal, modalOpen, evoModal, charSelectModal, welcomeBack, refreshPanel } from './ui.js';
+import { initUI, updateHUD, toast, modal, modalOpen, evoModal, charSelectModal, welcomeBack, refreshPanel, blessModal } from './ui.js';
 import { sfx } from './audio.js';
 
 const SAVE_KEY = 'fluffFeather.save.v1';
@@ -88,6 +88,7 @@ async function boot() {
     if (tapTimes.length >= 20) return; // anti-autoclicker cap
     tapTimes.push(now);
     const [lx, ly] = G.renderer.toLogical(e.clientX, e.clientY);
+    if (G.renderer.balloonHit(lx, ly, G.battle)) { G.battle.popBalloon(); sfx.loot(); vib(25); return; }
     G.battle.tap();
     G.renderer.tapFx(lx, ly);
     sfx.tap();
@@ -122,6 +123,9 @@ async function boot() {
     const pe = pendingEvo(s.animal, s.level, s);
     const key = s.animal + pe;
     if (pe >= 0 && !evoPrompted[key] && !modalOpen()) { evoPrompted[key] = 1; evoModal(false); }
+    // blessing choice after a big boss (once per offer; the HUD button reopens it)
+    const bk = s.blessOffer ? s.blessOffer.join() + s.blessPending : '';
+    if (bk && !evoPrompted[bk] && !modalOpen()) { evoPrompted[bk] = 1; blessModal(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -153,12 +157,19 @@ function handleEvents(b) {
         const r = RARITIES[ev.item.rarity];
         if (!ev.sold) {
           if (ev.item.rarity >= 2) sfx.loot();
-          toast(`${ev.equipped ? 'Equipped' : 'Found'} <b style="color:${r.color}">${ev.item.name}</b>${ev.item.rarity >= 2 ? ` (${r.name})` : ''}`);
+          const up = !ev.equipped && isUpgrade(G.s, ev.item);
+          toast(`${ev.equipped ? 'Equipped' : 'Found'} <b style="color:${r.color}">${ev.item.name}</b>${ev.item.rarity >= 2 ? ` (${r.name})` : ''}${up ? ' · <b style="color:#5ad85a">▲ upgrade!</b>' : ''}`);
         }
         break;
       }
       case 'sp': sfx.loot(); vib(20); toast(`🌟 You found ${ev.n > 1 ? ev.n + ' skill points' : 'a skill point'}! Spend it in <b>Talents</b>.`); break;
       case 'jackpot': sfx.loot(); break;
+      case 'skill': ev.id === 'midas' || ev.id === 'flurry' ? sfx.level() : sfx.crit(); vib(25); break;
+      case 'questDone': sfx.level(); toast(`📜 Quest complete! Claim your reward in <b>Train</b>.`); break;
+      case 'balloon': {
+        const t = { gold: `🪙 +${fmtNum(ev.gold)} gold`, frenzy: '😤 Frenzy fully charged!', item: `🎁 A <b style="color:${ev.item && RARITIES[ev.item.rarity].color}">${ev.item && RARITIES[ev.item.rarity].name}</b> item!`, gems: `💎 +${ev.n} gem${ev.n > 1 ? 's' : ''}!`, sp: '🌟 A skill point!' }[ev.kind];
+        toast(`🎈 Pop! ${t}`); break;
+      }
       case 'companionUnlock': toast('🤝 You can now recruit a <b>pal</b>! Check the Pals tab.'); break;
       case 'stage':
         if (ev.stage === 30) toast('✨ <b>Prestige</b> unlocked! Check the Prestige tab.');

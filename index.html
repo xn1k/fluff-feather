@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Tiny5&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Jersey+10&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -34,10 +34,12 @@
     <canvas id="cv"></canvas>
     <div id="h-boss" class="bossbar hidden"><i></i><span></span></div>
     <button id="btn-evolve" class="hidden" data-act="openEvo">✨ Evolve!</button>
+    <button id="btn-bless" class="hidden" data-act="openBless">🎁 Blessing!</button>
   </div>
   <div id="actions">
     <button id="btn-boss" class="hidden" data-act="retryBoss">⚔️ Fight boss</button>
-    <div id="dps"><span id="h-dps">0</span> <small>DPS</small> · <span id="h-tap">0</span> <small>per tap</small></div>
+    <div id="skills"><button class="sk" data-act="skill" data-slot="0"><span class="si"></span><i></i><b></b></button><button class="sk" data-act="skill" data-slot="1"><span class="si"></span><i></i><b></b></button><button class="sk" data-act="skill" data-slot="2"><span class="si"></span><i></i><b></b></button></div>
+    <div id="dps"><span id="h-dps">0</span> <small>DPS</small><br><span id="h-tap">0</span> <small>per tap</small></div>
     <button id="btn-frenzy" data-act="frenzy"><i></i><span>Frenzy</span></button>
   </div>
   <nav id="tabs">

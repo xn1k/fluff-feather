@@ -1,7 +1,7 @@
 // Balance sim: a bot plays the game (tapping + greedy upgrades + prestiges) and prints pacing.
 // usage: node tools/sim.mjs [hours=6] [tapsPerSec=5]
 import { newState, Battle, computeStats, upgCost, perkCost, companionCost, companionUnlocked, pendingEvo,
-  stardustGain, doPrestige, itemScore, fmtNum, fmtTime, simulateOffline, learnTalent, canLearn } from '../js/core.js';
+  stardustGain, doPrestige, itemScore, fmtNum, fmtTime, simulateOffline, learnTalent, canLearn, pickBlessing, claimQuest, skillSlots } from '../js/core.js';
 import { TALENTS } from '../js/data.js';
 import { UPGRADES, PERKS, PRESTIGE_STAGE } from '../js/data.js';
 import { TUNE } from '../js/core.js';
@@ -89,6 +89,13 @@ while (t < HOURS * 3600) {
   // taps
   if (rand() < TAPS * dt) b.tap();
   if (s.frenzy >= b.stats.frenzyKills) b.activateFrenzy();
+  // new systems: use skills when ready, pop balloons (if the bot taps), pick a random blessing, claim quests
+  if (TAPS > 0) {
+    for (const sl of skillSlots(s)) if (!sl.locked && b.skillReady(sl.id)) b.useSkill(sl.id);
+    if (b.balloon && b.balloon.age > 2) b.popBalloon();
+  }
+  while (s.blessPending > 0) pickBlessing(s, Math.floor(rand() * 3), rand);
+  for (let i = s.quests.length - 1; i >= 0; i--) if (s.quests[i].have >= s.quests[i].n) claimQuest(s, i, rand);
   b.events.length = 0;
   t += dt;
   if (t >= nextShop) { shop(); nextShop = t + 2; }
@@ -98,7 +105,7 @@ while (t < HOURS * 3600) {
   }
   if (t >= nextReport) {
     const st = computeStats(s);
-    log.push(`[${fmtTime(t)}] stage ${s.stage}${s.farming ? 'F' : ''} lvl ${s.level} gold ${fmtNum(s.gold)} auto ${fmtNum(st.autoDps)} tapdps ${fmtNum(TAPS * st.tapDps)} upg ${JSON.stringify(s.upg)} items ${s.items.length} gems ${s.gems} comp ${s.companion.level} SP ${s.spTotal} talents ${JSON.stringify(s.talents)}`);
+    log.push(`[${fmtTime(t)}] stage ${s.stage}${s.farming ? 'F' : ''} lvl ${s.level} gold ${fmtNum(s.gold)} auto ${fmtNum(st.autoDps)} tapdps ${fmtNum(TAPS * st.tapDps)} upg ${JSON.stringify(s.upg)} items ${s.items.length} gems ${s.gems} comp ${s.companion.level} SP ${s.spTotal} bless ${s.blessings.length} quests ${s.questsDone}`);
     nextReport = t + 600;
   }
   // Prestige when stuck for 4 minutes past the prestige stage, and gain is decent.

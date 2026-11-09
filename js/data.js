@@ -1,6 +1,6 @@
 // Static game data. Adding a new animal = add an entry to ANIMALS (+ sprites).
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 
 // Branch archetypes. T1 forms get the archetype bonus; T2 forms add a trait.
 export const ARCH = {
@@ -243,3 +243,49 @@ function pc(v) { return `${Math.round(v * 100)}%`; }
 // Base chance to find a skill point per kill type.
 export const SP_CHANCE = { boss: 0.10, bigboss: 0.40, mimic: 0.25, gem: 0.25 };
 export const SP_FIRST_BIGBOSS = 1; // guaranteed point for beating a big boss on a brand-new best stage
+
+// ---------------------------------------------------------------- active skills
+// Slot 1 unlocks at level 10, slot 2 is the evolution branch's signature move, slot 3 needs a pal.
+export const SKILLS = {
+  strike: { icon: '💥', name: 'Power Strike', cd: 20, desc: 'One mighty blow worth 30 hits.' },
+  smash:  { icon: '🪨', name: 'Earthshaker',  cd: 45, desc: 'A crushing 80-hit slam that also freezes the boss timer for 5s.' },
+  flurry: { icon: '🌪️', name: 'Flurry',       cd: 40, desc: 'Triple attack speed for 8s.' },
+  midas:  { icon: '🪄', name: 'Midas Spell',  cd: 60, desc: 'Triple gold and +50% loot chance for 15s.' },
+  assist: { icon: '🤝', name: 'Pal Assist',   cd: 30, desc: 'Your pal unleashes 20 seconds of its damage at once.' },
+};
+export const SIGNATURE = { power: 'smash', swift: 'flurry', mystic: 'midas' };
+export const STRIKE_LEVEL = 10;
+
+// ---------------------------------------------------------------- blessings (pick 1 of 3 after every big boss, last until prestige)
+export const BLESSINGS = [
+  { id: 'fury',    icon: '🔥', name: 'Fury',          desc: '+40% damage',                       fx: { dmg: 0.4 } },
+  { id: 'haste',   icon: '💨', name: 'Haste',         desc: '+20% attack speed',                 fx: { speed: 0.2 } },
+  { id: 'fist',    icon: '👊', name: 'Iron Fist',     desc: '+80% tap damage',                   fx: { tap: 0.8 } },
+  { id: 'greed',   icon: '🪙', name: 'Greed',         desc: '+50% gold',                         fx: { gold: 0.5 } },
+  { id: 'prec',    icon: '🎯', name: 'Precision',     desc: '+5% crit chance, +50% crit damage', fx: { crit: 0.05, critd: 0.5 } },
+  { id: 'regicide',icon: '👑', name: 'Regicide',      desc: '+60% boss damage',                  fx: { boss: 0.6 } },
+  { id: 'patience',icon: '⏳', name: 'Patience',      desc: '+6s boss timer',                    fx: { time: 6 } },
+  { id: 'friend',  icon: '🤝', name: 'Friendship',    desc: '+80% pal damage',                   fx: { pal: 0.8 } },
+  { id: 'wisdom',  icon: '📚', name: 'Wisdom',        desc: '+60% XP',                           fx: { xp: 0.6 } },
+  { id: 'treasure',icon: '🎁', name: 'Treasure',      desc: '+50% loot chance',                  fx: { loot: 0.5 } },
+  { id: 'focus',   icon: '⚡', name: 'Focus',         desc: 'Skills recharge 30% faster',        fx: { cd: 0.3 } },
+  { id: 'frenzied',icon: '😤', name: 'Frenzied',      desc: 'Frenzy charges twice as fast',      fx: { frenzy: 1 } },
+  { id: 'hunter',  icon: '🌟', name: 'Talent Hunter', desc: '+50% skill point chance',           fx: { sp: 0.5 } },
+  { id: 'glass',   icon: '💀', name: 'Glass Cannon',  desc: '+100% damage but −8s boss timer',   fx: { dmg: 1.0, time: -8 }, risky: true },
+  { id: 'gamble',  icon: '🎲', name: 'Gambler',       desc: '+150% gold but −25% damage',        fx: { gold: 1.5, dmg: -0.25 }, risky: true },
+];
+export const BLESS_REROLL_GEMS = 3;
+
+// ---------------------------------------------------------------- quests (3 at a time)
+export const QUEST_TYPES = [
+  { type: 'kill',    min: 300, max: 800, text: n => `Defeat ${n} monsters` },
+  { type: 'boss',    min: 8,   max: 20,  text: n => `Defeat ${n} bosses` },
+  { type: 'tap',     min: 600, max: 1500, text: n => `Tap ${n} times` },
+  { type: 'skill',   min: 8,   max: 20,  text: n => `Use skills ${n} times`, needs: 'skills' },
+  { type: 'balloon', min: 1,   max: 3,   text: n => `Pop ${n} gift balloon${n > 1 ? 's' : ''}` },
+  { type: 'stage',   min: 6,   max: 16,  text: n => `Clear ${n} stages` },
+  { type: 'loot',    min: 4,   max: 10,   text: n => `Find ${n} items` },
+  { type: 'crit',    min: 250, max: 700, text: n => `Land ${n} critical hits` },
+  { type: 'mimic',   min: 1,   max: 3,   text: n => `Defeat ${n} treasure mimic${n > 1 ? 's' : ''}` },
+];
+export const QUEST_REROLL_GEMS = 2;

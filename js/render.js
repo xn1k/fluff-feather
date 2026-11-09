@@ -6,7 +6,7 @@ import { biome, biomeIndex, fmtNum } from './core.js';
 export const W = 256, H = 160, GROUND = 134;
 const MON_H = 37;
 const HERO_X = 96, COMP_X = 62, MON_X = 184;
-const FONT = '"Tiny5", monospace';
+const FONT = '"Jersey 10", monospace';
 
 // ------------------------------------------------------------------ helpers
 function rr(ctx, x, y, w, h, r) {
@@ -315,8 +315,8 @@ export class Renderer {
         else { this.compAtk = 0; this.compAtkDur = Math.min(0.32, 0.9 / battle.stats.compAps); }
         break;
       case 'hit': {
-        const col = ev.crit ? '#ffd23c' : ev.src === 'tap' ? '#ffffff' : ev.src === 'comp' ? '#9ae0ff' : '#ffe8e0';
-        this.text(fmtNum(ev.dmg) + (ev.crit ? '!' : ''), mx - 18 + Math.random() * 36, my + 6 - Math.random() * 14, col, ev.crit ? 10 : 7, 0.7, -26);
+        const col = ev.src === 'skill' ? '#ff9a3c' : ev.crit ? '#ffd23c' : ev.src === 'tap' ? '#ffffff' : ev.src === 'comp' ? '#9ae0ff' : '#ffe8e0';
+        this.text(fmtNum(ev.dmg) + (ev.crit ? '!' : ''), mx - 18 + Math.random() * 36, my + 6 - Math.random() * 14, col, ev.src === 'skill' ? 13 : ev.crit ? 10 : 7, ev.src === 'skill' ? 1.1 : 0.7, -26);
         this.flash = 0.08;
         if (ev.src === 'tap') this.fx.push({ k: 'slash', x: mx - 8 + Math.random() * 16, y: my - 6 + Math.random() * 12, life: 0.18, max: 0.18, a: Math.random() * Math.PI });
         if (ev.crit) { this.spark(mx, my, '#ffd23c', 5); this.shake = Math.max(this.shake, 0.12); }
@@ -337,11 +337,51 @@ export class Renderer {
       case 'stage': this.text(`Stage ${ev.stage}`, W / 2, 50, '#ffffff', 12, 1.6, -6); break;
       case 'frenzy': this.text('FRENZY!', HERO_X, 50, '#ff9a3c', 13, 1.5, -8); break;
       case 'sp': this.text(`+${ev.n} SKILL POINT`, W / 2, 34, '#ffe14a', 11, 2, -6); this.spark(HERO_X, GROUND - 30, '#ffe14a', 20, 70); break;
+      case 'skill': {
+        const SK = { strike: ['POWER STRIKE!', '#ff9a3c'], smash: ['EARTHSHAKER!', '#c89a5a'], flurry: ['FLURRY!', '#7ad0ff'], midas: ['MIDAS SPELL!', '#ffd23c'], assist: ['PAL ASSIST!', '#9ae0ff'] }[ev.id];
+        this.text(SK[0], W / 2, 44, SK[1], 12, 1.3, -8);
+        if (ev.id === 'assist') { this.compAtk = 0; this.compAtkDur = 0.35; } else { this.heroAtk = 0; this.heroAtkDur = 0.35; }
+        if (ev.id === 'strike' || ev.id === 'assist') { for (let i = 0; i < 3; i++) this.fx.push({ k: 'slash', x: mx - 6 + i * 6, y: my - 4 + i * 4, life: 0.3, max: 0.3, a: 0.6 + i * 0.5, big: 1 }); this.shake = 0.25; }
+        if (ev.id === 'smash') { this.shake = 0.6; for (let i = 0; i < 4; i++) this.spark(mx - 20 + i * 14, GROUND - 2, '#8a6a4a', 8, 90); }
+        if (ev.id === 'flurry') this.spark(HERO_X, GROUND - 26, '#7ad0ff', 24, 80);
+        if (ev.id === 'midas') this.spark(HERO_X, GROUND - 26, '#ffd23c', 30, 80);
+        break;
+      }
+      case 'balloon': {
+        const p = this.lastBalloon || [W / 2, 40];
+        const T = { gold: ['+' + fmtNum(ev.gold || 0), '#ffd23c'], frenzy: ['FRENZY READY!', '#ff9a3c'], item: ['ITEM!', '#4fa0f0'], gems: [`+${ev.n} 💎`, '#7af0ff'], sp: ['+1 SKILL POINT', '#ffe14a'] }[ev.kind];
+        this.text(T[0], p[0], p[1], T[1], 11, 1.6, -12);
+        this.spark(p[0], p[1], ['#ff5a7a', '#5ab0ff', '#ffd23c', '#7ae07a'][this.lastHue || 0], 22, 90);
+        break;
+      }
       case 'jackpot': this.text('JACKPOT!', MON_X, 30, '#ffd23c', 11, 1.4, -10); this.spark(MON_X, GROUND - 20, '#ffd23c', 24, 90); break;
       case 'thunder': this.text('THUNDERCLAP!', MON_X, 26, '#9adfff', 10, 1.2, -10); this.spark(MON_X, GROUND - 20, '#9adfff', 18, 100); this.shake = 0.3; break;
     }
   }
   tapFx(lx, ly) { this.spark(lx, ly, '#ffffff', 3, 40); }
+  balloonPos(b) { return [W + 14 - (b.age / b.dur) * (W + 28), b.y + Math.sin(b.age * 2.2) * 3]; }
+  // Generous hit box: the balloon plus the gift hanging under it.
+  balloonHit(lx, ly, battle) {
+    const b = battle.balloon;
+    if (!b) return false;
+    const [x, y] = this.balloonPos(b);
+    if (Math.abs(lx - x) < 15 && ly > y - 16 && ly < y + 24) { this.lastBalloon = [x, y]; this.lastHue = b.hue; return true; }
+    return false;
+  }
+  drawBalloon(ctx, b) {
+    const [x, y] = this.balloonPos(b).map(Math.round);
+    const col = ['#ff5a7a', '#5ab0ff', '#ffd23c', '#7ae07a'][b.hue];
+    ctx.strokeStyle = '#3a2a3a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, y + 9); ctx.quadraticCurveTo(x + 3, y + 13, x, y + 16); ctx.stroke();
+    ctx.fillStyle = '#1a1020'; ctx.fillRect(x - 5, y + 15, 10, 8);
+    ctx.fillStyle = '#c84a4a'; ctx.fillRect(x - 4, y + 16, 8, 6);
+    ctx.fillStyle = '#ffd23c'; ctx.fillRect(x - 1, y + 16, 2, 6); ctx.fillRect(x - 4, y + 18, 8, 2);
+    ctx.fillStyle = '#1a1020'; ctx.beginPath(); ctx.ellipse(x, y, 8, 10, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(x, y, 7, 9, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fillRect(x - 4, y - 5, 2, 4);
+    ctx.fillStyle = '#1a1020'; ctx.fillRect(x - 1, y + 9, 3, 2);
+    if (Math.floor(this.t * 4) % 2) { ctx.fillStyle = '#fff6a0'; ctx.fillRect(x + 9, y - 8, 1, 3); ctx.fillRect(x + 8, y - 7, 3, 1); }
+  }
 
   draw(dt, game) {
     const { battle, s } = game;
@@ -374,6 +414,11 @@ export class Renderer {
     // heroes
     const hf = game.heroFormId, cf = game.compFormId;
     const pose = (atk, dur) => ({ walk: this.t, moving: walking, atk: atk >= 0 ? atk / dur : -1 });
+    if (s.buffs.flurry > 0) {
+      ctx.fillStyle = `rgba(110,200,255,${0.2 + Math.sin(this.t * 14) * 0.08})`;
+      ctx.beginPath(); ctx.ellipse(HERO_X, GROUND - 24, 24, 32, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    if (s.buffs.midas > 0 && Math.random() < 0.3) this.fx.push({ k: 'spark', x: HERO_X - 14 + Math.random() * 28, y: GROUND - 50 + Math.random() * 40, vx: 0, vy: -20, life: 0.5, color: '#ffd23c' });
     if (s.frenzyT > 0) {
       ctx.fillStyle = `rgba(255,150,60,${0.18 + Math.sin(this.t * 10) * 0.08})`;
       ctx.beginPath(); ctx.ellipse(HERO_X, GROUND - 22, 22, 30, 0, 0, Math.PI * 2); ctx.fill();
@@ -388,6 +433,8 @@ export class Renderer {
     drawForm(ctx, hf, HERO_X, GROUND, game.heroH, pose(this.heroAtk, this.heroAtkDur), false, game.heroA);
     if (this.heroAtk >= 0) { this.heroAtk += dt; if (this.heroAtk > this.heroAtkDur) this.heroAtk = -1; }
     if (this.compAtk >= 0) { this.compAtk += dt; if (this.compAtk > this.compAtkDur) this.compAtk = -1; }
+
+    if (battle.balloon) this.drawBalloon(ctx, battle.balloon);
 
     // effects
     for (const f of this.fx) {
@@ -404,8 +451,8 @@ export class Renderer {
         ctx.fillStyle = f.color; ctx.fillRect(Math.round(f.x), Math.round(f.y), 2, 2);
       } else if (f.k === 'slash') {
         ctx.globalAlpha = f.life / f.max;
-        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5;
-        const p = 1 - f.life / f.max, len = 16;
+        ctx.strokeStyle = f.big ? '#ffd8a0' : '#ffffff'; ctx.lineWidth = f.big ? 4 : 2.5;
+        const p = 1 - f.life / f.max, len = f.big ? 26 : 16;
         ctx.beginPath();
         ctx.moveTo(f.x - Math.cos(f.a) * len, f.y - Math.sin(f.a) * len);
         ctx.lineTo(f.x - Math.cos(f.a) * len + Math.cos(f.a) * len * 2 * Math.min(1, p * 2.5), f.y - Math.sin(f.a) * len + Math.sin(f.a) * len * 2 * Math.min(1, p * 2.5));

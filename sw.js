@@ -1,5 +1,5 @@
 // Stale-while-revalidate: instant offline start, picks up new versions on the next launch.
-const CACHE = 'ff-v5';
+const CACHE = 'ff-v6';
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./', 'index.html', 'style.css', 'js/main.js', 'js/core.js', 'js/data.js', 'js/render.js', 'js/ui.js', 'js/sprites.js', 'js/audio.js', 'manifest.webmanifest'])).catch(() => { }));
   self.skipWaiting();

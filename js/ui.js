@@ -2,6 +2,7 @@
 import {
   ANIMALS, ANIMAL_IDS, FORMS, ARCH, TRAITS, UPGRADES, PERKS, RARITIES, SLOTS, EVO_LEVELS, GEM_COSTS,
   COMPANION_STAGE, PRESTIGE_STAGE, VERSION, TALENTS, TALENT_ROWS, TALENT_BRANCHES, SP_CHANCE,
+  SKILLS, BLESS_REROLL_GEMS, QUEST_REROLL_GEMS, STRIKE_LEVEL,
 } from './data.js';
 import {
   fmtNum, fmtTime, computeStats, upgCostN, upgMaxAffordable, perkCost, companionCost, companionUnlocked,
@@ -9,6 +10,8 @@ import {
   sellValue, fmtStat, STAT_NAMES, rollItem, addItem, xpToNext, biome, WAVES, simulateOffline, Battle, FRENZY_KILLS,
   isBigBossStage, TALENT, talentRank, talentVal, branchSpent, talentCost, talentRowOpen, canLearn, learnTalent,
   talentsSpent, resetTalents, anyLearnable,
+  skillSlots, BLESS, pickBlessing, rerollBlessings, blessingSummary, questText, questGold, claimQuest, rerollQuest,
+  itemCompare, isUpgrade, equipBest, gearTotals,
 } from './core.js';
 import { portrait } from './render.js';
 import { Sprites, itemIconCanvas } from './sprites.js';
@@ -21,7 +24,8 @@ let panelPressed = false, lastPanelHTML = '', lastPanelT = 0;
 
 export function initUI(game) {
   G = game;
-  for (const id of ['h-gold', 'h-gems', 'h-dust', 'h-stage', 'h-biome', 'h-waves', 'h-boss', 'btn-boss', 'btn-frenzy', 'h-dps', 'h-tap', 'panel', 'modal', 'toasts', 'btn-evolve']) els[id] = $(id);
+  for (const id of ['h-gold', 'h-gems', 'h-dust', 'h-stage', 'h-biome', 'h-waves', 'h-boss', 'btn-boss', 'btn-frenzy', 'h-dps', 'h-tap', 'panel', 'modal', 'toasts', 'btn-evolve', 'btn-bless']) els[id] = $(id);
+  els.sk = [...document.querySelectorAll('#skills .sk')];
   els['h-waves'].innerHTML = Array.from({ length: WAVES }, (_, i) => `<i class="${i === WAVES - 1 ? 'boss' : ''}"></i>`).join('');
   els.pips = [...els['h-waves'].children];
 
@@ -67,7 +71,7 @@ export function updateHUD() {
   if (bossOn) {
     const left = b.phase === 'fight' ? b.bossLeft : st.bossTime;
     els['h-boss'].firstChild.style.width = (100 * left / st.bossTime) + '%';
-    setText(els['h-boss'].lastChild, 'bt', `${isBigBossStage(s.stage) ? '👑 ' : ''}BOSS ${left.toFixed(1)}s`);
+    setText(els['h-boss'].lastChild, 'bt', `${isBigBossStage(s.stage) ? '👑 ' : ''}BOSS ${left.toFixed(1)}s${s.buffs.stun > 0 ? ' ⏸ frozen' : ''}`);
   }
   els['btn-boss'].classList.toggle('hidden', !s.farming);
   const fr = els['btn-frenzy'];
@@ -82,6 +86,23 @@ export function updateHUD() {
   setBadge('pals', (companionUnlocked(s) && !s.companion.animal) || (s.companion.animal && pendingEvo(s.companion.animal, s.companion.level, s) >= 0));
   setBadge('items', s.items.some(i => i.isNew));
   setBadge('talents', anyLearnable(s));
+  setBadge('upgrades', s.quests.some(q => q.have >= q.n));
+  els['btn-bless'].classList.toggle('hidden', !(s.blessPending > 0));
+  // skill bar
+  skillSlots(s).forEach((sl, i) => {
+    const btn = els.sk[i], sk = SKILLS[sl.id];
+    const cd = s.skillCd[sl.id] || 0, on = (s.buffs[sl.id] || 0) > 0;
+    const key = `${sl.id}|${sl.locked}|${Math.ceil(cd)}|${on}`;
+    if (cache['sk' + i] !== key) {
+      cache['sk' + i] = key;
+      btn.firstChild.textContent = sl.locked && sl.sig ? '❔' : sk.icon;
+      btn.lastChild.textContent = sl.locked ? sl.lock : cd > 0 ? Math.ceil(cd) + 's' : '';
+      btn.classList.toggle('locked', sl.locked);
+      btn.classList.toggle('ready', !sl.locked && cd <= 0);
+      btn.classList.toggle('on', on);
+    }
+    btn.children[1].style.setProperty('--p', sl.locked ? 0 : cd / (sk.cd * st.cdMult));
+  });
   setBadge('prestige', s.maxStage >= PRESTIGE_STAGE && stardustGain(s) >= Math.max(5, s.stardustTotal * 0.25) && !s.seenPrestigeHint);
   // panel refresh (throttled; never while a finger is down on it)
   const now = performance.now();
@@ -140,7 +161,7 @@ const segX = () => `<div class="seg">Buy: ${[1, 10, 100, 'max'].map(x => `<butto
 const PANELS = {
   upgrades() {
     const s = G.s;
-    let h = segX();
+    let h = questsHTML() + segX();
     for (const u of UPGRADES) {
       const lvl = s.upg[u.id];
       const maxed = u.max != null && lvl >= u.max;
@@ -178,23 +199,42 @@ const PANELS = {
       <span>Passive</span><b>${a.passive.text}</b>
       ${f.trait ? `<span>Trait</span><b>${TRAITS[f.trait]}</b>` : ''}
     </div>`;
+    h += `<h3>Skills</h3><div class="skl">${skillSlots(s).map(sl => {
+      const sk = SKILLS[sl.id];
+      return `<div class="row${sl.locked ? ' dim' : ''}"><div class="ic">${sl.locked && sl.sig ? '❔' : sk.icon}</div><div class="info"><b>${sl.locked && sl.sig ? 'Signature move' : sk.name}</b><small>${sl.locked ? '🔒 ' + lockText(sl) : sk.cd + 's cooldown'}</small>
+        <div class="desc">${sl.locked && sl.sig ? 'Each evolution branch has its own move: Earthshaker (Power), Flurry (Swift) or Midas Spell (Mystic).' : sk.desc}</div></div></div>`;
+    }).join('')}</div>`;
+    const bl = blessingSummary(s);
+    h += `<h3>Blessings this run</h3>` + (bl.length ? `<div class="blist">${bl.map(({ b, n }) => `<span class="bchip${b.risky ? ' risky' : ''}">${b.icon} ${b.name}${n > 1 ? ' ×' + n : ''}<small>${b.desc}</small></span>`).join('')}</div>`
+      : `<p class="muted">Beat a big boss (every 10th stage) to choose a blessing. They last until you prestige.</p>`);
     h += `<h3>Evolution path</h3>` + treeHTML(s.animal, s.level);
     return h;
   },
 
   items() {
     const s = G.s;
+    const base = computeStats(s);
     let h = `<div class="equip">`;
     for (const sl of SLOTS) {
-      const it = itemById(s, s.equipped[sl]);
-      h += it ? `<div class="slot filled" data-act="item" data-id="${it.id}">${itemTile(it, true)}<div style="color:${RARITIES[it.rarity].color === '#c8c8c8' ? 'inherit' : RARITIES[it.rarity].color};font-weight:700">${it.name}</div></div>`
-        : `<div class="slot"><div style="font-size:26px;opacity:.4">${{ weapon: '⚔️', armor: '🛡️', charm: '🍀' }[sl]}</div>No ${sl}</div>`;
+      const it = itemById(s, s.equipped[sl]), info = SLOT_INFO[sl];
+      h += `<div class="slot${it ? ' filled' : ''}" ${it ? `data-act="item" data-id="${it.id}" style="--rc:${RARITIES[it.rarity].color}"` : ''}>
+        <div class="slab">${info.icon} ${info.name}</div>
+        ${it ? `${itemTile(it, base, true)}<div class="sname" style="color:${rc(it)}">${it.name}</div>` : `<div class="sempty">${info.icon}</div><div class="sname muted">Empty</div>`}
+        <div class="smain">${info.main}</div></div>`;
     }
-    h += `</div><h3>Backpack (${s.items.length}/60)</h3>`;
+    h += `</div>`;
+    const tot = gearTotals(s);
+    const chips = Object.entries(tot).map(([k, v]) => `<span class="gchip">${STAT_ICON[k] || '•'} ${fmtStat(k, v)} ${STAT_NAMES[k].toLowerCase()}</span>`).join('');
+    h += `<div class="gear"><b>Your gear gives</b>${chips || '<span class="muted">nothing yet. Equip something!</span>'}</div>`;
     const eq = new Set(Object.values(s.equipped));
-    const list = s.items.filter(i => !eq.has(i.id)).sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot) || b.rarity - a.rarity || itemScore(b) - itemScore(a));
-    if (!list.length) h += `<p class="muted">Defeat monsters to find loot. Bosses drop more, and treasure mimics always do!</p>`;
-    h += `<div class="inv">${list.map(it => `<button class="it" style="border-color:${RARITIES[it.rarity].color}" data-act="item" data-id="${it.id}">${itemTile(it)}</button>`).join('')}</div>`;
+    const spare = s.items.filter(i => !eq.has(i.id));
+    const ups = spare.map(it => ({ it, c: itemCompare(s, it, base) }));
+    const nUp = ups.filter(u => u.c.value > 0.002).length;
+    h += `<div class="mbtns"><button class="btn${nUp ? ' glow' : ''}" data-act="equipBest" ${nUp ? '' : 'disabled'}>⬆ Equip best${nUp ? `<small>${nUp} upgrade${nUp > 1 ? 's' : ''} found</small>` : '<small>all set!</small>'}</button></div>`;
+    h += `<h3>Backpack <small class="muted">(${s.items.length}/60) · ▲ = better than what you wear</small></h3>`;
+    ups.sort((a, b) => (b.c.value > 0.002) - (a.c.value > 0.002) || SLOTS.indexOf(a.it.slot) - SLOTS.indexOf(b.it.slot) || b.it.rarity - a.it.rarity || b.it.ilvl - a.it.ilvl);
+    if (!ups.length) h += `<p class="muted">Defeat monsters to find loot. Bosses drop more, gift balloons sometimes do, and treasure mimics always do!</p>`;
+    h += `<div class="inv">${ups.map(({ it, c }) => `<button class="it" style="--rc:${RARITIES[it.rarity].color}" data-act="item" data-id="${it.id}">${itemTile(it, base, false, c)}</button>`).join('')}</div>`;
     h += `<div class="mbtns"><button class="btn warn" data-act="sellJunk">Sell unlocked spares</button>
       <button class="btn gem" data-act="gemChest" ${s.gems < GEM_COSTS.chest ? 'disabled' : ''}>Gem chest<small>💎 ${GEM_COSTS.chest} · Rare+</small></button></div>
       <div class="toggle"><span>Auto-sell new loot below</span><select data-act-change="autoSell">${['Off', 'Uncommon', 'Rare', 'Epic'].map((n, i) => `<option value="${i}" ${s.settings.autoSell === i ? 'selected' : ''}>${n}</option>`).join('')}</select></div>`;
@@ -332,12 +372,23 @@ function itemIcon(it) {
   const url = Sprites.grids.items ? itemIconCanvas(it.icon, 48) : null;
   return url ? `<img src="${url}" alt="">` : `<span>${EMOJI[it.icon] || '❔'}</span>`;
 }
-function itemTile(it, plain) {
-  if (plain) return `<div class="it" style="width:52px;margin:0 auto 3px;border-color:${RARITIES[it.rarity].color}">${itemIcon(it)}</div>`;
-  const s = G.s;
-  const cur = itemById(s, s.equipped[it.slot]);
-  const better = !cur || itemScore(it) > itemScore(cur);
-  return itemIcon(it) + (it.locked ? '<span class="lk">🔒</span>' : '') + (it.isNew ? '<span class="nw"></span>' : '') + (better ? '<span class="up">▲</span>' : '');
+const SLOT_INFO = {
+  weapon: { icon: '⚔️', name: 'Weapon', main: 'Main: damage' },
+  armor: { icon: '🛡️', name: 'Outfit', main: 'Main: gold' },
+  charm: { icon: '🍀', name: 'Charm', main: 'Main: a special bonus' },
+};
+const STAT_ICON = { dmg: '⚔️', gold: '🪙', critChance: '🎯', critDmg: '💥', speed: '💨', tap: '👆', xp: '📚', boss: '👑', luck: '🍀' };
+const rc = it => RARITIES[it.rarity].color === '#c8c8c8' ? 'inherit' : RARITIES[it.rarity].color;
+function itemTile(it, base, plain, cmp) {
+  const lv = `<span class="il">${it.ilvl}</span>`;
+  if (plain) return `<div class="it big" style="--rc:${RARITIES[it.rarity].color}">${itemIcon(it)}${lv}</div>`;
+  const up = (cmp || itemCompare(G.s, it, base)).value > 0.002;
+  return itemIcon(it) + lv + (it.locked ? '<span class="lk">🔒</span>' : '') + (it.isNew ? '<span class="nw"></span>' : '') + (up ? '<span class="up">▲</span>' : '');
+}
+function pctChip(label, v) {
+  if (Math.abs(v) < 0.0005) return `<span class="dchip">${label} <b>±0%</b></span>`;
+  const t = Math.abs(v) >= 10 ? fmtNum(Math.abs(v) * 100) : (Math.abs(v) * 100).toFixed(Math.abs(v) < 0.1 ? 1 : 0);
+  return `<span class="dchip ${v > 0 ? 'pos' : 'neg'}">${label} <b>${v > 0 ? '▲ +' : '▼ −'}${t}%</b></span>`;
 }
 function markItemsSeen() { setTimeout(() => G.s.items.forEach(i => { i.isNew = false; }), 1500); }
 
@@ -351,17 +402,55 @@ function itemModal(it) {
   for (const k of keys) {
     const v = it.stats[k] || 0, cv = cur && !isEq ? (cur.stats[k] || 0) : null;
     const diff = cv == null ? '' : v > cv ? `<span class="d pos">▲</span>` : v < cv ? `<span class="d neg">▼</span>` : '';
-    rows += `<div class="statline"><span>${STAT_NAMES[k]}</span><b>${v ? fmtStat(k, v) : '—'}${diff}</b></div>`;
+    rows += `<div class="statline"><span>${STAT_ICON[k] || ''} ${STAT_NAMES[k]}</span><b>${v ? fmtStat(k, v) : '—'}${cv != null ? ` <small class="muted">(now ${cv ? fmtStat(k, cv) : '—'})</small>` : ''}${diff}</b></div>`;
   }
-  modal(`<div style="text-align:center">${itemTile(it, true)}<h2 style="color:${r.color === '#c8c8c8' ? 'inherit' : r.color};margin:4px 0">${it.name}</h2>
-    <div class="muted">${r.name} ${it.slot} · item level ${it.ilvl}${isEq ? ' · equipped' : ''}</div></div>
-    <div class="stats" style="display:block">${rows}</div>
-    ${cur && !isEq ? `<p class="muted">▲▼ compared to your ${cur.name}</p>` : ''}
+  let verdict = '';
+  if (!isEq) {
+    const c = itemCompare(s, it);
+    const good = c.value > 0.002, bad = c.value < -0.002;
+    verdict = `<div class="verdict ${good ? 'pos' : bad ? 'neg' : ''}"><div class="vh">${good ? '⬆ Upgrade!' : bad ? '⬇ Worse than ' + (cur ? 'your ' + cur.name : 'nothing') : '≈ About the same'}</div>
+      <div class="vrow">${pctChip('Idle DPS', c.dps)}${pctChip('Tap', c.tap)}${pctChip('Gold', c.gold)}</div>
+      <small class="muted">What changes for you if you equip it${cur ? ' instead of ' + cur.name : ''}.</small></div>`;
+  }
+  modal(`<div style="text-align:center">${itemTile(it, null, true)}<h2 style="color:${rc(it)};margin:4px 0">${it.name}</h2>
+    <div class="muted">${r.name} ${SLOT_INFO[it.slot].name.toLowerCase()} · item level ${it.ilvl}${isEq ? ' · <b>equipped</b>' : ''}</div></div>
+    ${verdict}
+    <div class="stats" style="display:block"><div class="statline"><b>What it does</b></div>${rows}</div>
     <div class="mbtns">
       ${isEq ? '' : `<button class="btn" data-act="equip" data-id="${it.id}">Equip</button>`}
       <button class="btn" data-act="lock" data-id="${it.id}">${it.locked ? 'Unlock' : 'Lock'}</button>
       ${isEq || it.locked ? '' : `<button class="btn warn" data-act="sell" data-id="${it.id}">Sell<small>🪙 ${fmtNum(sellValue(s, it))}</small></button>`}
     </div>`);
+}
+
+function lockText(sl) {
+  if (sl.id === 'strike') return `unlocks at level ${STRIKE_LEVEL}`;
+  if (sl.sig) return 'unlocks when you evolve (level 25)';
+  return 'recruit a pal to unlock';
+}
+
+function questsHTML() {
+  const s = G.s;
+  let h = `<div class="quests"><div class="qh">📜 Quests <small class="muted">${s.questsDone} done · ↻ swaps one for 💎 ${QUEST_REROLL_GEMS}</small></div>`;
+  s.quests.forEach((q, i) => {
+    const done = q.have >= q.n;
+    const rw = q.reward.sp ? '🌟 1' : q.reward.gems ? `💎 ${q.reward.gems}` : `🪙 ${fmtNum(questGold(s, q))}`;
+    h += `<div class="q${done ? ' done' : ''}"><div class="qt"><span>${questText(q)}</span><div class="qbar"><i style="width:${(100 * q.have / q.n).toFixed(1)}%"></i><em>${fmtNum(q.have)} / ${fmtNum(q.n)}</em></div></div>
+      ${done ? `<button class="btn" data-act="claimQuest" data-i="${i}">Claim<small>${rw}</small></button>` : `<div class="qr">${rw}</div><button class="rr" data-act="rerollQuest" data-i="${i}" ${s.gems < QUEST_REROLL_GEMS ? 'disabled' : ''}>↻</button>`}</div>`;
+  });
+  return h + `</div>`;
+}
+
+export function blessModal() {
+  const s = G.s;
+  if (!s.blessOffer) return;
+  modal(`<h2>🎁 Choose a blessing</h2><p style="text-align:center;margin-top:0">The big boss is down! Pick one boon for the rest of this run${s.blessPending > 1 ? ` (${s.blessPending} to pick)` : ''}. Blessings stack and reset when you prestige.</p>
+    <div class="cards">${s.blessOffer.map((id, i) => {
+      const b = BLESS[id], n = s.blessings.filter(x => x === id).length;
+      return `<div class="card bless${b.risky ? ' risky' : ''}"><div class="bi">${b.icon}</div><b>${b.name}</b><span>${b.desc}</span>${b.risky ? '<span class="risk">⚠ Risky</span>' : ''}${n ? `<span class="muted">You have ×${n}</span>` : ''}
+        <button class="btn" data-act="blessPick" data-i="${i}">Choose</button></div>`;
+    }).join('')}</div>
+    <div class="mbtns"><button class="btn warn" data-act="close">Later</button><button class="btn gem" data-act="blessReroll" ${s.gems < BLESS_REROLL_GEMS ? 'disabled' : ''}>Reroll<small>💎 ${BLESS_REROLL_GEMS}</small></button></div>`);
 }
 
 // ------------------------------------------------------------------ modals & toasts
@@ -415,7 +504,8 @@ export function welcomeBack(sum) {
   modal(`<h2>😴 Welcome back!</h2><p style="text-align:center">You were away for <b>${fmtTime(sum.seconds)}</b>${sum.capped ? ' (max)' : ''}. Your hero kept fighting:</p>
     <div class="stats"><span>Gold</span><b>🪙 ${fmtNum(sum.gold + sum.soldGold)}</b><span>Monsters defeated</span><b>${fmtNum(sum.kills)}</b>
     <span>Stages cleared</span><b>${sum.stages} (now ${sum.endStage})</b><span>Levels gained</span><b>${sum.levels}</b>
-    <span>Items found</span><b>${items}</b>${sum.gems ? `<span>Gems</span><b>💎 ${sum.gems}</b>` : ''}${sum.sp ? `<span>Skill points</span><b>🌟 ${sum.sp}</b>` : ''}</div>
+    <span>Items found</span><b>${items}</b>${sum.gems ? `<span>Gems</span><b>💎 ${sum.gems}</b>` : ''}${sum.sp ? `<span>Skill points</span><b>🌟 ${sum.sp}</b>` : ''}${sum.blessings ? `<span>Blessings to choose</span><b>🎁 ${sum.blessings}</b>` : ''}</div>
+    ${sum.farmStage ? `<p class="muted" style="font-size:12px">Your hero couldn't beat the monsters here without your taps, so they farmed stage ${sum.farmStage} instead.</p>` : ''}
     <div class="mbtns"><button class="btn big" data-act="close">Yay!</button></div>`);
 }
 
@@ -471,6 +561,32 @@ const ACTIONS = {
     toast(`✨ Evolved into <b>${f.name}</b>!`);
   },
   talentBr(d) { G.talentBr = d.br; },
+  skill(d) {
+    const sl = skillSlots(G.s)[+d.slot];
+    if (sl.locked) return toast(`🔒 ${sl.sig ? 'Your signature move' : SKILLS[sl.id].name}: ${lockText(sl)}`);
+    if (!G.battle.useSkill(sl.id)) return;
+  },
+  openBless() { blessModal(); },
+  blessPick(d) {
+    const b = pickBlessing(G.s, +d.i);
+    if (!b) return closeModal();
+    sfx.level(); vib(20); G.battle.refresh(); G.save();
+    toast(`${b.icon} <b>${b.name}</b>: ${b.desc}`);
+    if (G.s.blessPending > 0) blessModal(); else closeModal();
+  },
+  blessReroll() { if (rerollBlessings(G.s)) { sfx.buy(); blessModal(); } },
+  claimQuest(d) {
+    const got = claimQuest(G.s, +d.i);
+    if (!got) return;
+    sfx.loot(); vib(20); G.save();
+    toast(`📜 Quest reward: ${got.sp ? '🌟 1 skill point' : got.gems ? `💎 ${got.gems}` : `🪙 ${fmtNum(got.gold)}`}`);
+  },
+  rerollQuest(d) { if (rerollQuest(G.s, +d.i)) sfx.buy(); },
+  equipBest() {
+    const n = equipBest(G.s);
+    if (!n) return;
+    G.battle.refresh(); sfx.buy(); G.save(); toast('⬆ Equipped your best gear');
+  },
   learn(d) {
     if (!learnTalent(G.s, d.id)) return;
     sfx.level(); vib(15); G.battle.refresh(); G.save();

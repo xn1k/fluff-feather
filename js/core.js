@@ -2,6 +2,7 @@
 import {
   ANIMALS, FORMS, EVO_LEVELS, BIOMES, BOSSES, SPECIALS, UPGRADES, PERKS, RARITIES, SLOTS, ITEM_BASES,
   PREFIXES, AFFIXES, COMPANION_STAGE, PRESTIGE_STAGE, GEM_COSTS, TALENTS, TALENT_ROWS, SP_CHANCE, SP_FIRST_BIGBOSS,
+  SKILLS, SIGNATURE, STRIKE_LEVEL, BLESSINGS, BLESS_REROLL_GEMS, QUEST_TYPES, QUEST_REROLL_GEMS,
 } from './data.js';
 
 // Balance knobs (tools/sim.mjs can override them: node tools/sim.mjs 3 5 '{"hpGrowth":1.6}')
@@ -30,6 +31,9 @@ export function newState(animal) {
     frenzy: 0, frenzyT: 0,
     gemMilestone: 0,
     sp: 0, spTotal: 0, talents: {},
+    skillCd: {}, buffs: {},
+    blessings: [], blessPending: 0, blessOffer: null,
+    quests: [], questsDone: 0,
   };
   return s;
 }
@@ -40,6 +44,7 @@ export function migrate(s) {
   // Talent tree arrived in v0.3: grant points for progress already made.
   if (s.talents === undefined && s.bestStage) { s.sp = Math.floor(s.bestStage / 10) + Math.floor(((s.stats && s.stats.bossKills) || 0) / 10); s.spTotal = s.sp; }
   for (const k of Object.keys(d)) if (s[k] === undefined) s[k] = d[k];
+  if (!Array.isArray(s.quests)) s.quests = [];
   for (const k of ['upg', 'perks', 'evo', 'settings', 'stats', 'equipped']) {
     for (const kk of Object.keys(d[k])) if (s[k][kk] === undefined) s[k][kk] = d[k][kk];
   }
@@ -248,6 +253,126 @@ export function resetTalents(s) {
 }
 export function anyLearnable(s) { return s.sp > 0 && TALENTS.some(t => canLearn(s, t.id)); }
 
+// ---------------------------------------------------------------- blessings
+export const BLESS = Object.fromEntries(BLESSINGS.map(b => [b.id, b]));
+export function blessVal(s, k) { let v = 0; for (const id of s.blessings) v += (BLESS[id] && BLESS[id].fx[k]) || 0; return v; }
+export function rollBlessOffer(rand = Math.random) {
+  const pool = BLESSINGS.map(b => b.id), out = [];
+  while (out.length < 3) out.push(pool.splice(Math.floor(rand() * pool.length), 1)[0]);
+  return out;
+}
+export function grantBlessing(s, rand = Math.random) {
+  s.blessPending++;
+  if (!s.blessOffer) s.blessOffer = rollBlessOffer(rand);
+}
+export function pickBlessing(s, i, rand = Math.random) {
+  if (!s.blessOffer || !s.blessPending) return null;
+  const id = s.blessOffer[i];
+  s.blessings.push(id); s.blessPending--;
+  s.blessOffer = s.blessPending > 0 ? rollBlessOffer(rand) : null;
+  return BLESS[id];
+}
+export function rerollBlessings(s, rand = Math.random) {
+  if (!s.blessOffer || s.gems < BLESS_REROLL_GEMS) return false;
+  s.gems -= BLESS_REROLL_GEMS; s.blessOffer = rollBlessOffer(rand);
+  return true;
+}
+// Blessings grouped for display: [{b, n}]
+export function blessingSummary(s) {
+  const m = new Map();
+  for (const id of s.blessings) m.set(id, (m.get(id) || 0) + 1);
+  return [...m].map(([id, n]) => ({ b: BLESS[id], n }));
+}
+
+// ---------------------------------------------------------------- active skills
+export function skillSlots(s) {
+  const hf = heroForm(s);
+  const sig = hf.tier >= 1 ? SIGNATURE[hf.arch] : null;
+  return [
+    { id: 'strike', locked: s.level < STRIKE_LEVEL, lock: `Lv ${STRIKE_LEVEL}` },
+    { id: sig || 'smash', locked: !sig, lock: 'Evolve', sig: true },
+    { id: 'assist', locked: !s.companion.animal, lock: 'Pal' },
+  ];
+}
+export function hasSkills(s) { return s.level >= STRIKE_LEVEL; }
+
+// ---------------------------------------------------------------- quests
+export function newQuest(s, rand = Math.random) {
+  const have = new Set(s.quests.map(q => q.type));
+  const pool = QUEST_TYPES.filter(q => !have.has(q.type) && (q.needs !== 'skills' || hasSkills(s)));
+  const def = pool[Math.floor(rand() * pool.length)];
+  const f = rand();
+  let n = Math.round(def.min + (def.max - def.min) * f);
+  if (n >= 50) n = Math.round(n / 25) * 25;
+  // harder quests pay better: skill point > gems > gold
+  const r = rand();
+  const reward = r < 0.08 + 0.17 * f ? { sp: 1 } : r < 0.55 ? { gems: f > 0.6 ? 2 : 1 } : { goldKills: Math.round(120 + 200 * f) };
+  return { type: def.type, n, have: 0, reward };
+}
+export function ensureQuests(s, rand = Math.random) {
+  while (s.quests.length < 3) s.quests.push(newQuest(s, rand));
+}
+export function questText(q) { return QUEST_TYPES.find(d => d.type === q.type).text(q.n); }
+export function questTick(s, type, n = 1, events) {
+  for (const q of s.quests) {
+    if (q.type !== type || q.have >= q.n) continue;
+    q.have = Math.min(q.n, q.have + n);
+    if (q.have >= q.n && events) events.push({ type: 'questDone', q });
+  }
+}
+export function questGold(s, q) { return monsterGold(s.stage, 'normal') * computeStats(s).gold * q.reward.goldKills; }
+export function claimQuest(s, i, rand = Math.random) {
+  const q = s.quests[i];
+  if (!q || q.have < q.n) return null;
+  const r = q.reward, got = {};
+  if (r.sp) { s.sp += r.sp; s.spTotal += r.sp; got.sp = r.sp; }
+  if (r.gems) { s.gems += r.gems; got.gems = r.gems; }
+  if (r.goldKills) { const g = questGold(s, q); s.gold += g; s.stats.goldEarned += g; got.gold = g; }
+  s.quests.splice(i, 1); s.questsDone++;
+  ensureQuests(s, rand);
+  return got;
+}
+export function rerollQuest(s, i, rand = Math.random) {
+  if (s.gems < QUEST_REROLL_GEMS || !s.quests[i]) return false;
+  s.gems -= QUEST_REROLL_GEMS;
+  const old = s.quests.splice(i, 1)[0];
+  const q = newQuest(s, rand); s.quests.splice(i, 0, q);
+  if (q.type === old.type) s.quests[i] = newQuest(s, rand);
+  return true;
+}
+
+// ---------------------------------------------------------------- gear comparison
+// One number for "how good is my setup": damage (idle + some tapping) matters most, gold a bit.
+export function gearValue(st) { return Math.log(st.autoDps + 2 * st.tapDps) + 0.5 * Math.log(st.gold); }
+// What equipping `it` would change, in relative terms.
+export function itemCompare(s, it, base) {
+  base = base || computeStats(s);
+  const cur = s.equipped[it.slot];
+  if (cur === it.id) return { dps: 0, tap: 0, gold: 0, value: 0, equipped: true };
+  s.equipped[it.slot] = it.id;
+  const w = computeStats(s);
+  s.equipped[it.slot] = cur;
+  return { dps: w.autoDps / base.autoDps - 1, tap: w.tapDps / base.tapDps - 1, gold: w.gold / base.gold - 1, value: gearValue(w) - gearValue(base) };
+}
+export function isUpgrade(s, it, base) { return itemCompare(s, it, base).value > 0.002; }
+export function equipBest(s) {
+  let changed = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    for (const slot of SLOTS) {
+      const base = computeStats(s);
+      let best = null, bv = 0.002;
+      for (const it of s.items) if (it.slot === slot) { const v = itemCompare(s, it, base).value; if (v > bv) { bv = v; best = it; } }
+      if (best) { s.equipped[slot] = best.id; changed++; }
+    }
+  }
+  return changed;
+}
+export function gearTotals(s) {
+  const t = {};
+  for (const it of equippedItems(s)) for (const [k, v] of Object.entries(it.stats)) t[k] = (t[k] || 0) + v;
+  return t;
+}
+
 // ---------------------------------------------------------------- stats
 const TIER_MULT = [1, 3, 10];
 
@@ -268,6 +393,7 @@ export function computeStats(s) {
   const P = s.perks, U = s.upg;
   const frenzy = s.frenzyT > 0;
   const T = id => talentVal(s, id), R = id => talentRank(s, id);
+  const B = k => blessVal(s, k), buff = k => (s.buffs[k] || 0) > 0;
 
   const arch = hf.tier >= 1 ? hf.arch : null;
   let hit = (1 + U.dmg) * Math.pow(2, Math.floor(U.dmg / 25));
@@ -279,35 +405,38 @@ export function computeStats(s) {
   hit *= 1 + TUNE.sdPer * s.stardustTotal;
   hit *= 1 + item.dmg;
   hit *= (1 + T('sharp')) * T('overp');
+  hit *= Math.max(0.1, 1 + B('dmg'));
 
   let aps = 1 * (1 + 0.05 * U.speed) * (1 + item.speed);
   if (arch === 'swift') aps *= 1.25;
   aps *= Math.pow(1.4, has('haste'));
-  aps *= (1 + T('light')) * T('blur');
+  aps *= (1 + T('light')) * T('blur') * (1 + B('speed'));
   if (frenzy) aps *= 2;
-  aps = Math.min(aps, 12);
+  if (buff('flurry')) aps *= 3;
+  aps = Math.min(aps, buff('flurry') ? 30 : 12);
 
   let critChance = 0.03 + 0.01 * U.crit + (passive.critChance || 0) + item.critChance + 0.12 * has('precision');
   if (arch === 'swift') critChance += 0.05;
-  critChance += T('keen');
+  critChance += T('keen') + B('crit');
   critChance = Math.min(0.75, critChance);
-  const critMult = 2 + 0.1 * U.critd + item.critDmg + 1.5 * has('precision') + T('brutal');
+  const critMult = 2 + 0.1 * U.critd + item.critDmg + 1.5 * has('precision') + T('brutal') + B('critd');
 
   let tapHit = hit * 0.6 * (1 + 0.15 * U.tap) * (1 + 0.4 * P.tapm) * (1 + item.tap);
   if (arch === 'mystic') tapHit *= 2;
   tapHit *= Math.pow(3, has('storm'));
-  tapHit *= 1 + T('quick');
+  tapHit *= (1 + T('quick')) * (1 + B('tap'));
   if (frenzy) tapHit *= 2;
 
   let gold = (1 + 0.15 * U.gold) * (1 + (passive.gold || 0)) * (1 + 0.3 * P.paws) * (1 + item.gold);
   if (arch === 'mystic') gold *= 1.25;
   gold *= Math.pow(2, has('midas'));
-  gold *= (1 + T('golden')) * T('midasp');
+  gold *= (1 + T('golden')) * T('midasp') * (1 + B('gold'));
+  if (buff('midas')) gold *= 3;
 
-  const xp = (1 + 0.3 * P.wise) * (1 + item.xp) * (1 + T('study'));
-  let boss = (1 + (passive.boss || 0) + item.boss) * Math.pow(2.5, has('bossSlayer')) * (1 + T('giant'));
+  const xp = (1 + 0.3 * P.wise) * (1 + item.xp) * (1 + T('study')) * (1 + B('xp'));
+  let boss = (1 + (passive.boss || 0) + item.boss) * Math.pow(2.5, has('bossSlayer')) * (1 + T('giant')) * (1 + B('boss'));
   const luckLv = 0.2 * P.luck + item.luck + (has('lucky') ? 0.6 : 0);
-  const lootMult = (1 + 0.2 * P.luck) * Math.pow(2, has('lucky')) * (1 + T('nose'));
+  const lootMult = (1 + 0.2 * P.luck) * Math.pow(2, has('lucky')) * (1 + T('nose')) * (1 + B('loot')) * (buff('midas') ? 1.5 : 1);
   const gemMult = Math.pow(2, has('lucky')) * (1 + T('gemsense'));
 
   // companion
@@ -320,7 +449,7 @@ export function computeStats(s) {
     if (cf.tier >= 1 && cf.arch === 'power') cdps *= 1.4;
     if (cf.tier >= 1 && cf.arch === 'swift') compAps = 1.6;
     cdps *= 1 + 0.5 * P.pack;
-    cdps *= 1 + T('packt');
+    cdps *= (1 + T('packt')) * (1 + B('pal'));
     if (frenzy) cdps *= 2;
     compHit = cdps / compAps;
   }
@@ -331,10 +460,11 @@ export function computeStats(s) {
   return {
     hit, aps, critChance, critMult, tapHit, gold, xp, boss, luck: luckLv, lootMult, gemMult,
     compHit, compAps, doubleChance, cleave: has('cleave') > 0,
-    bossTime: BOSS_TIME + 3 * P.boss + T('wind'), autoDps, tapDps: tapHit * expCrit,
+    bossTime: Math.max(10, BOSS_TIME + 3 * P.boss + T('wind') + B('time')), autoDps, tapDps: tapHit * expCrit,
     offlineCapH: 8 + 2 * P.nap + T('dream'),
     frenzyKills: FRENZY_KILLS - T('charge'), frenzyTime: FRENZY_TIME + T('fury'),
-    walkMult: Math.max(0.5, 1 - T('fleet')), doubleTap: T('dtap'), spMult: 1 + T('scout'),
+    walkMult: Math.max(0.5, 1 - T('fleet')), doubleTap: T('dtap'), spMult: (1 + T('scout')) * (1 + B('sp')),
+    frenzyGain: 1 + B('frenzy'), cdMult: 1 / (1 + B('cd')),
     execute: R('exec') > 0, thunder: R('thunder') > 0, jackpot: R('jackpot') > 0,
   };
 }
@@ -360,6 +490,7 @@ export function doPrestige(s, newAnimal) {
   for (const k of Object.keys(s.upg)) s.upg[k] = 0;
   s.companion.level = s.companion.animal ? 1 : 0;
   s.frenzy = 0; s.frenzyT = 0;
+  s.blessings = []; s.blessPending = 0; s.blessOffer = null; s.buffs = {}; s.skillCd = {};
   return gain;
 }
 
@@ -398,6 +529,9 @@ export class Battle {
     this.bossLeft = 0;
     this.monster = null;
     this.carry = 0;
+    this.balloon = null; this.balloonT = 40 + rand() * 30;
+    this.queuedSkill = null;
+    ensureQuests(s, rand);
     this.spawn();
   }
   refresh() { this.stats = computeStats(this.s); }
@@ -419,6 +553,7 @@ export class Battle {
     if (this.isBoss()) amount *= this.stats.boss;
     m.hp -= amount;
     this.events.push({ type: 'hit', dmg: amount, src, crit });
+    if (crit) questTick(this.s, 'crit', 1, this.events);
     if (m.hp <= 0) {
       if (this.stats.cleave && !this.isBoss()) this.carry = -m.hp;
       this.kill();
@@ -437,6 +572,7 @@ export class Battle {
   tap() {
     const s = this.s;
     s.stats.taps++;
+    questTick(s, 'tap', 1, this.events);
     if (this.phase !== 'fight') { this.phaseT = Math.max(0, this.phaseT - 0.12); return; }
     const st = this.stats;
     let { dmg, crit } = this.rollHit(st.tapHit);
@@ -457,7 +593,11 @@ export class Battle {
     s.gold += gold; s.stats.goldEarned += gold;
     this.events.push({ type: 'kill', gold, kind: m.kind, monster: m });
     addXp(s, monsterXp(s.stage, m.kind) * st.xp, this.events);
-    if (s.frenzyT <= 0) s.frenzy = Math.min(st.frenzyKills, s.frenzy + 1);
+    if (s.frenzyT <= 0) s.frenzy = Math.min(st.frenzyKills, s.frenzy + st.frenzyGain);
+    questTick(s, 'kill', 1, this.events);
+    if (boss) questTick(s, 'boss', 1, this.events);
+    if (m.kind === 'mimic') questTick(s, 'mimic', 1, this.events);
+    if (m.kind === 'bigboss') { grantBlessing(s, this.rand); this.events.push({ type: 'blessing' }); }
 
     // skill points: a chance on special kills, guaranteed for a big boss on a brand-new best stage
     let sp = 0;
@@ -479,6 +619,7 @@ export class Battle {
         const res = addItem(s, it);
         if (res.sold) s.gold += res.gold;
         this.events.push({ type: 'loot', item: it, ...res });
+        questTick(s, 'loot', 1, this.events);
         if (res.equipped) this.dirtyStats = true;
       }
       chance -= 1;
@@ -499,6 +640,7 @@ export class Battle {
         if (s.bestStage === COMPANION_STAGE) this.events.push({ type: 'companionUnlock' });
       }
       this.events.push({ type: 'stage', stage: s.stage });
+      questTick(s, 'stage', 1, this.events);
     } else if (s.farming) {
       s.wave = s.wave >= WAVES - 1 ? 1 : s.wave + 1;
       // Auto-retry the boss when we've grown enough.
@@ -535,6 +677,43 @@ export class Battle {
     this.spawn();
   }
 
+  skillReady(id) { return (this.s.skillCd[id] || 0) <= 0; }
+  useSkill(id) {
+    const s = this.s, st = this.stats, slot = skillSlots(s).find(x => x.id === id);
+    if (!slot || slot.locked || !this.skillReady(id)) return false;
+    s.skillCd[id] = SKILLS[id].cd * st.cdMult;
+    this.events.push({ type: 'skill', id });
+    questTick(s, 'skill', 1, this.events);
+    if (id === 'flurry') { s.buffs.flurry = 8; this.refresh(); return true; }
+    if (id === 'midas') { s.buffs.midas = 15; this.refresh(); return true; }
+    if (this.phase === 'fight') this.fireSkill(id); else this.queuedSkill = id;
+    return true;
+  }
+  fireSkill(id) {
+    const s = this.s, st = this.stats;
+    if (id === 'strike') { const h = this.rollHit(st.hit * 30); this.damage(h.dmg, 'skill', h.crit); }
+    if (id === 'smash') { s.buffs.stun = 5; const h = this.rollHit(st.hit * 80); this.damage(h.dmg, 'skill', h.crit); }
+    if (id === 'assist') this.damage(st.compHit * st.compAps * 20, 'comp', false);
+  }
+  popBalloon() {
+    const s = this.s, st = this.stats, r = this.rand();
+    if (!this.balloon) return null;
+    this.balloon = null; this.balloonT = 90 + this.rand() * 90;
+    questTick(s, 'balloon', 1, this.events);
+    let rw;
+    if (r < 0.42) { const g = monsterGold(s.stage, 'normal') * st.gold * 60; s.gold += g; s.stats.goldEarned += g; rw = { kind: 'gold', gold: g }; }
+    else if (r < 0.62) { if (s.frenzyT > 0) s.frenzyT += 6; else s.frenzy = st.frenzyKills; rw = { kind: 'frenzy' }; }
+    else if (r < 0.78) {
+      const it = rollItem(s, Math.max(s.stage, s.maxStage), st.luck, this.rand, 2);
+      const res = addItem(s, it); if (res.sold) s.gold += res.gold;
+      this.events.push({ type: 'loot', item: it, ...res }); this.dirtyStats = true; rw = { kind: 'item', item: it };
+    }
+    else if (r < 0.92) { const n = 1 + (this.rand() < 0.3 ? 1 : 0); s.gems += n; rw = { kind: 'gems', n }; }
+    else { s.sp++; s.spTotal++; rw = { kind: 'sp' }; }
+    this.events.push({ type: 'balloon', ...rw });
+    return rw;
+  }
+
   activateFrenzy() {
     const s = this.s;
     if (s.frenzy < this.stats.frenzyKills || s.frenzyT > 0) return false;
@@ -547,6 +726,10 @@ export class Battle {
   step(dt) {
     const s = this.s;
     if (this.dirtyStats) { this.refresh(); this.dirtyStats = false; }
+    for (const k in s.skillCd) if (s.skillCd[k] > 0) s.skillCd[k] = Math.max(0, s.skillCd[k] - dt);
+    for (const k in s.buffs) if (s.buffs[k] > 0) { s.buffs[k] -= dt; if (s.buffs[k] <= 0) { s.buffs[k] = 0; if (k !== 'stun') this.refresh(); } }
+    if (this.balloon) { this.balloon.age += dt; if (this.balloon.age > this.balloon.dur) { this.balloon = null; this.balloonT = 90 + this.rand() * 90; } }
+    else if ((this.balloonT -= dt) <= 0) this.balloon = { age: 0, dur: 13, y: 24 + this.rand() * 26, hue: Math.floor(this.rand() * 4) };
     if (s.frenzyT > 0) { s.frenzyT -= dt; if (s.frenzyT <= 0) { s.frenzyT = 0; this.refresh(); } }
     if (this.phase === 'walk') {
       this.phaseT -= dt;
@@ -554,12 +737,13 @@ export class Battle {
         this.phase = 'fight';
         if (this.isBoss()) this.bossLeft = this.stats.bossTime;
         this.atkT = Math.min(this.atkT, 0.25);
+        if (this.queuedSkill) { const q = this.queuedSkill; this.queuedSkill = null; this.fireSkill(q); }
       }
       return;
     }
     const st = this.stats;
     if (this.isBoss()) {
-      this.bossLeft -= dt;
+      if (!(s.buffs.stun > 0)) this.bossLeft -= dt;
       if (this.bossLeft <= 0) { this.bossFail(); return; }
     }
     this.atkT -= dt;
@@ -593,11 +777,14 @@ export function simulateOffline(s, seconds, rand = Math.random) {
   let t = seconds;
   let guard = 0;
   const startLevel = s.level;
+  s.buffs = {}; s.skillCd = {};
+  sum.farmStage = 0;
   while (t > 0 && guard++ < 5000) {
     const st = computeStats(s);
     const dps = st.autoDps;
     const WALK = 0.55 * st.walkMult;
     const stage = s.stage;
+    let farmStage = stage;
     const normHp = monsterHp(stage, 5, 'normal');
     const tNorm = Math.max(normHp / dps, 0.15) + WALK;
     const kind = isBigBossStage(stage) ? 'bigboss' : 'boss';
@@ -613,21 +800,26 @@ export function simulateOffline(s, seconds, rand = Math.random) {
         s.wave = Math.min(WAVES - 1, s.wave + kills);
       } else { bossKills = 1; }
     } else {
-      // Farm the stage for the rest of the time (in chunks so levels/xp can make the boss beatable).
+      // Farm for the rest of the time (in chunks so levels/xp can make the boss beatable).
+      // If idle damage alone is too weak for this stage, farm the highest stage it handles comfortably.
       const chunk = Math.min(t, 600);
-      kills = Math.floor(chunk / tNorm); dur = chunk;
+      while (farmStage > 1 && Math.max(monsterHp(farmStage, 5, 'normal') / dps, 0.15) + WALK > 2.5) farmStage--;
+      const tFarm = Math.max(monsterHp(farmStage, 5, 'normal') / dps, 0.15) + WALK;
+      kills = Math.floor(chunk / tFarm); dur = chunk;
       s.farming = true;
+      if (farmStage < stage) sum.farmStage = farmStage;
     }
-    const g = (kills * monsterGold(stage, 'normal') + bossKills * monsterGold(stage, kind)) * st.gold * (st.jackpot ? 1.27 : 1);
-    const x = (kills * monsterXp(stage, 'normal') + bossKills * monsterXp(stage, kind)) * st.xp;
+    const g = (kills * monsterGold(farmStage, 'normal') + bossKills * monsterGold(stage, kind)) * st.gold * (st.jackpot ? 1.27 : 1);
+    const x = (kills * monsterXp(farmStage, 'normal') + bossKills * monsterXp(stage, kind)) * st.xp;
     s.gold += g; sum.gold += g; s.stats.goldEarned += g;
     sum.xp += x; addXp(s, x, null);
     s.stats.kills += kills + bossKills; sum.kills += kills + bossKills;
+    questTick(s, 'kill', kills + bossKills); questTick(s, 'boss', bossKills);
     // loot: expected count, roll individually up to a cap
     let drops = kills * 0.02 * st.lootMult + bossKills * (kind === 'bigboss' ? 1 : 0.3) * st.lootMult;
     let n = Math.floor(drops) + (rand() < drops % 1 ? 1 : 0);
     for (let i = 0; i < n; i++) {
-      const it = rollItem(s, stage, st.luck, rand, 0);
+      const it = rollItem(s, farmStage, st.luck, rand, 0);
       const res = addItem(s, it);
       if (res.sold) { s.gold += res.gold; sum.soldGold += res.gold; }
       else sum.items.push(it);
@@ -638,6 +830,8 @@ export function simulateOffline(s, seconds, rand = Math.random) {
       let sp = rand() < SP_CHANCE[kind] * st.spMult ? 1 : 0;
       if (kind === 'bigboss' && s.stage >= s.bestStage) sp += SP_FIRST_BIGBOSS;
       s.sp += sp; s.spTotal += sp; sum.sp += sp;
+      if (kind === 'bigboss') { grantBlessing(s, rand); sum.blessings = (sum.blessings || 0) + 1; }
+      questTick(s, 'stage', 1);
       s.stage++; s.wave = 1; s.farming = false; sum.stages++;
       if (s.stage > s.maxStage) s.maxStage = s.stage;
       if (s.stage > s.bestStage) {
